@@ -7,6 +7,10 @@ on:
         description: 'Number of recent commits to scan. If empty, the script defaults to the last 24 hours.'
         required: false
         default: ''
+      ue_branches:
+        description: 'Comma-separated branches to track (e.g. ue5-main,ue6-main). Default: ue5-main,ue6-main'
+        required: false
+        default: ''
       report_language:
         description: 'Language for the report (e.g., Japanese, English). Default: Japanese'
         required: false
@@ -62,6 +66,9 @@ jobs:
       # --- Dynamic Configuration ---
       # The script will use the following environment variables.
       # Priority: Manual Input > Repository Variable > Workflow Default
+      # Branches to track. vars.UE_BRANCH is kept as a fallback so existing
+      # single-branch setups (which configured UE_BRANCH) keep working.
+      UE_BRANCHES: ${{ github.event.inputs.ue_branches || vars.UE_BRANCHES || vars.UE_BRANCH || 'ue5-main,ue6-main' }}
       REPORT_LANGUAGE: ${{ github.event.inputs.report_language || vars.REPORT_LANGUAGE || 'Japanese' }}
       REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE || 'Asia/Tokyo' }}
       GEMINI_MODEL: ${{ github.event.inputs.gemini_model || vars.GEMINI_MODEL || 'gemini-3.5-flash' }}

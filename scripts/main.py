@@ -3,6 +3,7 @@
 import os
 import re
 import sys
+import time
 import requests
 from github import Github
 from github.GithubException import UnknownObjectException
@@ -13,32 +14,44 @@ from zoneinfo import ZoneInfo
 UE_REPO_NAME = "EpicGames/UnrealEngine" # Target repository
 raw_limit = os.environ.get("COMMIT_SCAN_LIMIT") # Keep for manual override
 COMMIT_SCAN_LIMIT = int(raw_limit) if raw_limit and raw_limit.isdigit() else None
-UE_BRANCH = os.environ.get("UE_BRANCH", "ue5-main") # Target branch
 
 # Timeout (seconds) for outbound HTTP calls (GitHub GraphQL, Slack, Discord).
 REQUEST_TIMEOUT = 30
 
 
-def fetch_new_commits(github_client):
+def get_target_branches():
+    """Returns the list of (label, branch) pairs to track.
+
+    Reads UE_BRANCHES (comma-separated, e.g. "ue5-main,ue6-main"). Falls back to
+    the legacy single UE_BRANCH for backward compatibility, then to a default of
+    both ue5-main and ue6-main. The label is derived from the first '-'-delimited
+    segment, uppercased (ue5-main -> UE5, ue6-main -> UE6).
     """
-    Fetches new commits from the UE repo.
+    raw = os.environ.get("UE_BRANCHES") or os.environ.get("UE_BRANCH") or "ue5-main,ue6-main"
+    branches = [b.strip() for b in raw.split(",") if b.strip()]
+    return [(branch.split("-")[0].upper(), branch) for branch in branches]
+
+
+def fetch_new_commits(github_client, branch):
+    """
+    Fetches new commits from the UE repo for the given branch.
     - If COMMIT_SCAN_LIMIT is set (manual run), it fetches that many recent commits.
     - Otherwise (scheduled run), it fetches commits from the last 24 hours.
     """
-    print(f"Fetching commits from {UE_REPO_NAME} on branch {UE_BRANCH}...")
+    print(f"Fetching commits from {UE_REPO_NAME} on branch {branch}...")
     try:
         repo = github_client.get_repo(UE_REPO_NAME)
         print("Successfully accessed repository.")
 
         if COMMIT_SCAN_LIMIT:
-            print(f"Manual override: Fetching the latest {COMMIT_SCAN_LIMIT} commits from branch '{UE_BRANCH}'.")
-            commits = repo.get_commits(sha=UE_BRANCH)
+            print(f"Manual override: Fetching the latest {COMMIT_SCAN_LIMIT} commits from branch '{branch}'.")
+            commits = repo.get_commits(sha=branch)
             new_commits = list(commits[:COMMIT_SCAN_LIMIT])
             new_commits.reverse() # Oldest to newest
         else:
             since_time = datetime.now(timezone.utc) - timedelta(hours=24)
-            print(f"Scheduled run: Fetching commits from branch '{UE_BRANCH}' since {since_time.isoformat()} UTC...")
-            commits = repo.get_commits(sha=UE_BRANCH, since=since_time)
+            print(f"Scheduled run: Fetching commits from branch '{branch}' since {since_time.isoformat()} UTC...")
+            commits = repo.get_commits(sha=branch, since=since_time)
             new_commits = list(commits)
             # Commits from .get_commits(since=...) are already in chronological order.
 
@@ -258,11 +271,12 @@ def _github_md_to_slack_mrkdwn(text):
     return converted
 
 
-def _chunk_text_for_slack(text, limit=2900):
+def _chunk_text(text, limit):
     """Split text into <=limit-char chunks at line boundaries.
 
-    Slack 'section' block text fields are capped at 3000 chars; we keep a margin.
-    A single over-long line is hard-split as a last resort.
+    Used by both Slack (section text fields capped at 3000 chars) and Discord
+    (embed descriptions capped at 4096 chars); callers pass an appropriate limit
+    with a safety margin. A single over-long line is hard-split as a last resort.
     """
     chunks = []
     current = ""
@@ -293,7 +307,7 @@ def send_slack_notification(webhook_url, channel, message_text, title):
     print("---")
     print("Sending Slack notification...")
     try:
-        chunks = _chunk_text_for_slack(_github_md_to_slack_mrkdwn(message_text))
+        chunks = _chunk_text(_github_md_to_slack_mrkdwn(message_text), 2900)
 
         # Slack allows at most 50 blocks per message. Reserve room for the header,
         # the divider, and (when truncating) the truncation notice, so the total
@@ -332,36 +346,158 @@ def send_slack_notification(webhook_url, channel, message_text, title):
         return False
 
 
+def _post_discord_message(webhook_url, payload):
+    """POST a single Discord webhook message, honoring 429 rate limits.
+
+    Discord returns 429 with a Retry-After header (seconds) when rate limited;
+    we wait and retry once. Returns True on success, False otherwise.
+    """
+    for attempt in range(2):
+        response = requests.post(webhook_url, json=payload, timeout=REQUEST_TIMEOUT)
+        if response.status_code == 429 and attempt == 0:
+            retry_after = response.headers.get("Retry-After", "1")
+            try:
+                wait = float(retry_after)
+            except ValueError:
+                wait = 1.0
+            print(f"  Discord rate limited (429). Waiting {wait}s before retry...")
+            time.sleep(min(wait, 30))
+            continue
+        response.raise_for_status()
+        return True
+    return False
+
+
 def send_discord_notification(webhook_url, message_text, title):
-    """Sends a notification to a Discord channel via a webhook."""
+    """Sends a notification to a Discord channel via a webhook.
+
+    The full report can exceed Discord's 4096-char embed description limit, so we
+    split it across multiple sequential messages. Returns True only if every
+    chunk posts successfully, so a partially-delivered report is not silently
+    reported as success.
+    """
     print("---")
     print("Sending Discord notification...")
-    try:
-        # Discord has a 4096 character limit for embed descriptions.
-        # Truncate message_text if it's too long.
-        if len(message_text) > 4000:
-            message_text = message_text[:4000] + "\n\n... (message truncated)"
+    # 3900 keeps a margin under the 4096 embed-description limit, leaving room for
+    # the truncation notice appended to the final chunk when we hit the cap.
+    chunks = _chunk_text(message_text, 3900)
 
+    # Cap the number of messages to avoid flooding the channel; mark truncation
+    # on the last message, mirroring the Slack section cap.
+    MAX_MESSAGES = 10
+    truncated = len(chunks) > MAX_MESSAGES
+    if truncated:
+        chunks = chunks[:MAX_MESSAGES]
+        chunks[-1] = chunks[-1] + "\n\n… (message truncated)"
+
+    total = len(chunks)
+    all_ok = True
+    for i, chunk in enumerate(chunks, start=1):
+        embed_title = title if i == 1 else f"{title} ({i}/{total})"
         payload = {
             "username": "UE Update Tracker",
             "avatar_url": "https://i.imgur.com/4M34hi2.png", # A simple robot icon
             "embeds": [
                 {
-                    "title": title,
-                    "description": message_text,
+                    "title": embed_title,
+                    "description": chunk,
                     "color": 3447003,  # A nice blue color, hex #3498db
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
             ]
         }
+        try:
+            if _post_discord_message(webhook_url, payload):
+                # Small delay between sequential posts to ease webhook rate limits.
+                if i < total:
+                    time.sleep(0.5)
+            else:
+                all_ok = False
+                print(f"  Failed to send Discord message {i}/{total}.")
+        except requests.exceptions.RequestException as e:
+            all_ok = False
+            print(f"  An error occurred while sending Discord message {i}/{total}: {e}")
 
-        response = requests.post(webhook_url, json=payload, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        print("Successfully sent Discord notification.")
-        return True
-    except requests.exceptions.RequestException as e:
-        print(f"An error occurred while sending Discord notification: {e}")
-        return False
+    if all_ok:
+        print(f"Successfully sent Discord notification ({total} message(s)).")
+    else:
+        print("Discord notification incomplete: one or more messages failed.")
+    return all_ok
+
+def process_branch(github_client, ai_client, branch, label, model_name, report_language):
+    """Fetch, filter, and analyze commits for a single branch.
+
+    Returns a dict {label, branch, status, body, shas} where status is one of:
+      - "ok":    body holds the generated Markdown report
+      - "empty": no important commits after filtering (nothing to report)
+      - "error": fetch failed or the AI returned no content
+    Failures are returned (not raised) so the caller can isolate one branch's
+    problem and still report the others.
+    """
+    new_commits = fetch_new_commits(github_client, branch)
+    if new_commits is None:
+        print(f"Failed to fetch commits for branch '{branch}'.")
+        return {"label": label, "branch": branch, "status": "error", "body": None, "shas": []}
+    if not new_commits:
+        print(f"No new commits found for branch '{branch}'.")
+        return {"label": label, "branch": branch, "status": "empty", "body": None, "shas": []}
+
+    important_commits = [commit for commit in new_commits if filter_commit(commit)]
+    if not important_commits:
+        print(f"No potentially important commits found after filtering for branch '{branch}'.")
+        return {"label": label, "branch": branch, "status": "empty", "body": None, "shas": []}
+
+    print(f"Found {len(important_commits)} potentially important commits to analyze for '{branch}'.")
+    shas = [commit.sha for commit in important_commits]
+    report_body = analyze_commits_in_bulk(ai_client, model_name, important_commits, report_language)
+    if not report_body:
+        print(f"Failed to generate report from AI for branch '{branch}'.")
+        return {"label": label, "branch": branch, "status": "error", "body": None, "shas": shas}
+
+    return {"label": label, "branch": branch, "status": "ok", "body": report_body, "shas": shas}
+
+
+def _warn_duplicate_shas(branch_results):
+    """Log a warning when the same commit appears on more than one branch.
+
+    UE branches share history, so a cherry-picked/merged commit can land in two
+    branches' windows and be summarized twice. We only surface this (no dedupe),
+    since deciding which branch 'owns' a shared commit is out of scope.
+    """
+    seen = {}
+    for result in branch_results:
+        for sha in result.get("shas", []):
+            seen.setdefault(sha, []).append(result["label"])
+    dups = {sha: labels for sha, labels in seen.items() if len(labels) > 1}
+    if dups:
+        print(f"Warning: {len(dups)} commit(s) appear on multiple tracked branches "
+              f"(reported per-branch, not de-duplicated):")
+        for sha, labels in list(dups.items())[:20]:
+            print(f"  {sha[:7]}: {', '.join(labels)}")
+
+
+def _build_combined_report(branch_results, report_language):
+    """Concatenate per-branch reports into one document, each under an H2 header.
+
+    'ok' branches contribute their generated report; 'empty' and 'error' branches
+    get a short localized placeholder so readers know the branch was checked.
+    """
+    is_ja = ("japan" in report_language.lower()) or ("日本" in report_language)
+    no_update = "_本日の注目すべき更新はありません。_" if is_ja else "_No notable updates today._"
+    failed_note = "_⚠️ レポート生成に失敗しました。_" if is_ja else "_⚠️ Failed to generate the report._"
+
+    sections = []
+    for result in branch_results:
+        header = f"## {result['label']} ({result['branch']})"
+        if result["status"] == "ok":
+            body = result["body"].strip()
+        elif result["status"] == "empty":
+            body = no_update
+        else:
+            body = failed_note
+        sections.append(f"{header}\n\n{body}")
+    return "\n\n---\n\n".join(sections)
+
 
 def main():
     """
@@ -432,34 +568,38 @@ def main():
     if has_discord_target:
         print("- Discord Notification is enabled.")
 
-    # --- State and Commit Fetching ---
-    print("\n--- 3. Fetching Commits ---")
-    new_commits = fetch_new_commits(github_client)
+    # --- Process Each Tracked Branch ---
+    print("\n--- 3. Processing Tracked Branches ---")
+    targets = get_target_branches()
+    print(f"Tracking {len(targets)} branch(es): {', '.join(branch for _, branch in targets)}")
 
-    if new_commits is None:
-        print("Failed to fetch commits. Exiting.")
-        sys.exit(1)
-
-    if not new_commits:
-        print("No new commits found since last check. Exiting.")
-        return
-
-    # --- Process Commits ---
-    print("\n--- 4. Analyzing New Commits ---")
-    important_commits = [commit for commit in new_commits if filter_commit(commit)]
-    
-    if not important_commits:
-        print("No potentially important commits found after filtering. Exiting.")
-        return
-        
-    print(f"Found {len(important_commits)} potentially important commits to analyze.")
-
-    # --- Generate Report and Post Discussion ---
-    print("\n--- 5. Generating and Sending Report ---")
     report_language = os.environ.get("REPORT_LANGUAGE", "Japanese")
     print(f"Report language set to: {report_language}")
-    report_body = analyze_commits_in_bulk(ai_client, gemini_model_name, important_commits, report_language)
 
+    branch_results = []
+    for label, branch in targets:
+        print(f"\n--- Branch: {label} ({branch}) ---")
+        try:
+            branch_results.append(
+                process_branch(github_client, ai_client, branch, label, gemini_model_name, report_language)
+            )
+        except Exception as e:
+            # Isolate per-branch failures so one bad branch doesn't abort the rest.
+            print(f"Unexpected error while processing branch '{branch}': {e}")
+            branch_results.append({"label": label, "branch": branch, "status": "error", "body": None, "shas": []})
+
+    # Surface (do not dedupe) commits shared across branches.
+    _warn_duplicate_shas(branch_results)
+
+    has_ok = any(r["status"] == "ok" for r in branch_results)
+    has_error = any(r["status"] == "error" for r in branch_results)
+
+    # All branches empty (and none errored): nothing worth reporting — exit quietly.
+    if not has_ok and not has_error:
+        print("\nNo important commits found on any tracked branch. Exiting.")
+        return
+
+    # --- Generate Report Title ---
     # Date the report in the configured timezone (defaults to JST) so the daily
     # title matches when readers receive it. time.strftime() uses the runner's
     # UTC clock, which dates the report a day behind for JST readers.
@@ -474,51 +614,55 @@ def main():
     # Track (target_name, success) so the workflow can fail if nothing posted.
     results = []
 
-    if report_body:
-        # --- 5a. Post to GitHub Discussion ---
-        if has_discussion_target:
-            print("\n--- 5a. Posting to GitHub Discussion ---")
-            discussion_category = os.environ.get("DISCUSSION_CATEGORY", "Daily Reports")
-            print(f"Attempting to post to repository '{discussion_repo_name}' in category: '{discussion_category}'")
-            results.append(("GitHub Discussion", create_discussion(discussion_repo_name, report_title, report_body, discussion_repo_pat, category_name=discussion_category)))
-        else:
-            print("\n--- 5a. GitHub Discussion target not configured. Skipping. ---")
-
-        # --- 5b. Post to Slack ---
+    # No branch produced content, but at least one errored: don't hide the
+    # failure. Notify Slack/Discord (a Discussion needs a body) and fail the run.
+    if not has_ok:
+        failed = ", ".join(f"{r['label']} ({r['branch']})" for r in branch_results if r["status"] == "error")
+        print(f"\nFailed to generate a report for all branches with commits: {failed}")
+        error_message = f"Error: Failed to generate the Unreal Engine report for: {failed}."
         if has_slack_target:
-            print("\n--- 5b. Posting to Slack ---")
-            results.append(("Slack", send_slack_notification(slack_webhook_url, slack_channel, report_body, report_title)))
-        else:
-            print("\n--- 5b. Slack target not configured. Skipping. ---")
-
-        # --- 5c. Post to Discord ---
-        if has_discord_target:
-            print("\n--- 5c. Posting to Discord ---")
-            results.append(("Discord", send_discord_notification(discord_webhook_url, report_body, report_title)))
-        else:
-            print("\n--- 5c. Discord target not configured. Skipping. ---")
-
-    else:
-        print("Failed to generate report from AI. No content to post.")
-        # Notify on AI failure (a Discussion needs a body, so Slack/Discord only)
-        error_message = "Error: Failed to generate the report from AI. No content is available."
-        if has_slack_target:
-            print("\n--- Handling Slack Notification for AI Failure ---")
+            print("\n--- Handling Slack Notification for failure ---")
             results.append(("Slack", send_slack_notification(slack_webhook_url, slack_channel, error_message, report_title)))
         if has_discord_target:
-            print("\n--- Handling Discord Notification for AI Failure ---")
+            print("\n--- Handling Discord Notification for failure ---")
             results.append(("Discord", send_discord_notification(discord_webhook_url, error_message, report_title)))
+        print("\n--- Delivery summary ---")
+        for name, ok in results:
+            print(f"  {'OK    ' if ok else 'FAILED'}: {name}")
+        print("FATAL: report generation failed for all branches; no report was delivered.")
+        sys.exit(1)
+
+    # --- Build and Send the Combined Report ---
+    print("\n--- 5. Generating and Sending Combined Report ---")
+    report_body = _build_combined_report(branch_results, report_language)
+
+    # --- 5a. Post to GitHub Discussion ---
+    if has_discussion_target:
+        print("\n--- 5a. Posting to GitHub Discussion ---")
+        discussion_category = os.environ.get("DISCUSSION_CATEGORY", "Daily Reports")
+        print(f"Attempting to post to repository '{discussion_repo_name}' in category: '{discussion_category}'")
+        results.append(("GitHub Discussion", create_discussion(discussion_repo_name, report_title, report_body, discussion_repo_pat, category_name=discussion_category)))
+    else:
+        print("\n--- 5a. GitHub Discussion target not configured. Skipping. ---")
+
+    # --- 5b. Post to Slack ---
+    if has_slack_target:
+        print("\n--- 5b. Posting to Slack ---")
+        results.append(("Slack", send_slack_notification(slack_webhook_url, slack_channel, report_body, report_title)))
+    else:
+        print("\n--- 5b. Slack target not configured. Skipping. ---")
+
+    # --- 5c. Post to Discord ---
+    if has_discord_target:
+        print("\n--- 5c. Posting to Discord ---")
+        results.append(("Discord", send_discord_notification(discord_webhook_url, report_body, report_title)))
+    else:
+        print("\n--- 5c. Discord target not configured. Skipping. ---")
 
     # --- Delivery summary ---
     print("\n--- Delivery summary ---")
     for name, ok in results:
         print(f"  {'OK    ' if ok else 'FAILED'}: {name}")
-    if report_body is None:
-        # AI generation failed: the daily report was never produced/delivered, so
-        # fail the run even if no Slack/Discord error notice could be sent (e.g.
-        # only GitHub Discussion is configured, which has nothing to post).
-        print("FATAL: report generation failed; no report was delivered.")
-        sys.exit(1)
     if results and not any(ok for _, ok in results):
         print("FATAL: all configured notification targets failed.")
         sys.exit(1)

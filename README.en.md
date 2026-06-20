@@ -13,8 +13,9 @@ Note: This image is an example report, and its content is entirely dummy data. I
 ## Key Features
 
 - Automatic update checks: Using GitHub Actions, fetches the latest commits from the UE repository on a schedule (daily at 23:00 UTC / 8:00 AM JST) or manually.
+- Parallel multi-branch tracking: Tracks `ue5-main` and `ue6-main` at the same time by default (configurable via `UE_BRANCHES`).
 - AI-powered summaries: The Gemini API analyzes commit contents, sorts them into categories like "New Features" and "Specification Changes," and summarizes each one.
-- Posting to Discussions: Posts the generated report to the repository's GitHub Discussions as "Unreal Engine Daily Report."
+- Posting to Discussions: Posts the generated report to the repository's GitHub Discussions as "Unreal Engine Daily Report." Each tracked branch (UE5 / UE6, etc.) appears in the same report under its own heading.
 - Slack notifications: Can also send the report to a specified Slack channel at the same time.
 - Discord notifications: Can also send the report to a specified Discord channel at the same time.
 
@@ -78,7 +79,7 @@ The rest of this document is for those who want to fork and customize this tool 
 
 Under the Epic Games license agreement, Unreal Engine's update history is confidential information that only authorized accounts may access. To prevent unintended information leaks, this tool stops running if no notification target is configured.
 
-For the report destination (`DISCUSSION_REPO` or a Slack channel), we strongly recommend a private location open only to members who have a fork of the Unreal Engine source code repository or equivalent access rights. This keeps you compliant with the license agreement and lets you share information safely.
+For the report destination (`DISCUSSION_REPO`, a Slack channel, or a Discord channel), we strongly recommend a private location open only to members who have a fork of the Unreal Engine source code repository or equivalent access rights. This keeps you compliant with the license agreement and lets you share information safely.
 
 ## How to Run
 
@@ -86,6 +87,7 @@ For the report destination (`DISCUSSION_REPO` or a Slack channel), we strongly r
 -   Manual execution: You can also run it manually from the repository's `Actions` tab by selecting the `Unreal Engine Update Tracker` workflow and clicking `Run workflow` (manual execution is restricted to repository administrators).
     -   Report Language: The language for the report (e.g., `English`, `Japanese`). Default: `Japanese`.
     -   Commit Scan Limit: The number of recent commits to scan for manual runs. Default: the last 24 hours.
+    -   UE Branches: Comma-separated branches to track (e.g., `ue5-main,ue6-main`). Default: `ue5-main,ue6-main`.
     -   Discussion Category: The Discussion category to post the report to. Default: `Daily Reports`.
     -   Gemini Model: The AI model used for analysis. Default: `gemini-3.5-flash`.
     -   Slack Webhook URL: A temporary Slack Webhook URL. Overrides the secret.
@@ -97,7 +99,7 @@ For the report destination (`DISCUSSION_REPO` or a Slack channel), we strongly r
     -   `REPORT_LANGUAGE`: The default report language (e.g., `English`).
     -   `DISCUSSION_CATEGORY`: The default category to post to (e.g., `Daily Reports`).
     -   `GEMINI_MODEL`: The default AI model to use. Default: `gemini-3.5-flash`. For higher quality, switch to a model such as `gemini-3.1-pro`.
-    -   `UE_BRANCH`: The branch to monitor (e.g., `release`). Default: `ue5-main`.
+    -   `UE_BRANCHES`: Comma-separated branches to monitor (e.g., `ue5-main,ue6-main` or `release`). Default: `ue5-main,ue6-main`. When multiple branches are set, each branch's report appears in a single post under its own heading (Discord is split into multiple messages automatically due to its character limit). The legacy single-branch `UE_BRANCH` Variable is still honored for backward compatibility (used when `UE_BRANCHES` is unset).
 
 ## Customization
 

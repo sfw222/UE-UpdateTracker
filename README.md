@@ -13,8 +13,9 @@
 ## 主な機能
 
 - 自動更新チェック: GitHub Actionsで、毎日決まった時刻（日本時間 午前8時 / UTC 23:00）または手動で、UEリポジトリの最新コミットを取得します。
+- 複数ブランチの並行追跡: 既定で `ue5-main` と `ue6-main` を同時に追跡します（`UE_BRANCHES` で変更可能）。
 - AIによる要約: Gemini APIがコミット内容を分析し、「新機能」「仕様変更」などのカテゴリに分類して要約します。
-- Discussionへの投稿: 生成したレポートを、リポジトリのGitHub Discussionsに「Unreal Engine Daily Report」として投稿します。
+- Discussionへの投稿: 生成したレポートを、リポジトリのGitHub Discussionsに「Unreal Engine Daily Report」として投稿します。追跡している各ブランチ（UE5 / UE6 など）は、1つのレポート内に見出しで分けて併記されます。
 - Slack通知: レポートを指定のSlackチャンネルにも同時に通知できます。
 - Discord通知: レポートを指定のDiscordチャンネルにも同時に通知できます。
 
@@ -78,7 +79,7 @@
 
 Unreal Engineの更新履歴は、Epic Gamesのライセンス契約に基づき、許可されたアカウントのみがアクセスできる機密情報です。意図しない情報漏洩を防ぐため、このツールは通知先が1つも設定されていないと動作を停止します。
 
-レポートの投稿先（`DISCUSSION_REPO`またはSlackチャンネル）には、Unreal Engineのソースコードリポジトリのフォーク、または同等のアクセス権を持つメンバーだけが参加するプライベートな場所を指定することを強く推奨します。これにより、ライセンス契約を遵守して安全に情報を共有できます。
+レポートの投稿先（`DISCUSSION_REPO`、Slackチャンネル、Discordチャンネル）には、Unreal Engineのソースコードリポジトリのフォーク、または同等のアクセス権を持つメンバーだけが参加するプライベートな場所を指定することを強く推奨します。これにより、ライセンス契約を遵守して安全に情報を共有できます。
 
 ## 実行方法
 
@@ -86,6 +87,7 @@ Unreal Engineの更新履歴は、Epic Gamesのライセンス契約に基づき
 -   手動実行: リポジトリの `Actions` タブで `Unreal Engine Update Tracker` ワークフローを選び、`Run workflow` ボタンから手動でも実行できます（手動実行はリポジトリの管理者のみ可能です）。
     -   Report Language: レポートを出力する言語を入力します（例: `Japanese`, `English`）。デフォルトは `Japanese`。
     -   Commit Scan Limit: 手動実行時にスキャンする最新コミット数。デフォルトは過去24時間。
+    -   UE Branches: 追跡するブランチをカンマ区切りで指定します（例: `ue5-main,ue6-main`）。デフォルトは `ue5-main,ue6-main`。
     -   Discussion Category: レポートを投稿するDiscussionカテゴリ名。デフォルトは `Daily Reports`。
     -   Gemini Model: 解析に使用するAIモデル名。デフォルトは `gemini-3.5-flash`。
     -   Slack Webhook URL: 一時的に使用するSlack Webhook URL。Secretの値を上書きします。
@@ -97,7 +99,7 @@ Unreal Engineの更新履歴は、Epic Gamesのライセンス契約に基づき
     -   `REPORT_LANGUAGE`: デフォルトのレポート言語（例: `English`）。
     -   `DISCUSSION_CATEGORY`: デフォルトの投稿先カテゴリ名（例: `Daily Reports`）。
     -   `GEMINI_MODEL`: デフォルトで使用するAIモデル。デフォルトは `gemini-3.5-flash`。より高品質を求める場合は `gemini-3.1-pro` などに変更できます。
-    -   `UE_BRANCH`: 監視対象のブランチ名（例: `release`）。デフォルトは `ue5-main`。
+    -   `UE_BRANCHES`: 監視対象のブランチ名をカンマ区切りで指定（例: `ue5-main,ue6-main` や `release`）。デフォルトは `ue5-main,ue6-main`。複数指定すると、各ブランチのレポートが1つの投稿内に見出しで分けて併記されます（Discordは文字数制限のため複数メッセージに自動分割されます）。なお、従来の単一ブランチ用 `UE_BRANCH` Variable も後方互換として引き続き利用できます（`UE_BRANCHES` 未設定時に参照されます）。
 
 ## カスタマイズ
 
