@@ -7,5 +7,9 @@ google-genai
 # For local development (reading .env files)
 python-dotenv
 
+# Time zone database for zoneinfo (needed on Windows / minimal images that lack
+# a system tz database; used to date the report in REPORT_TIMEZONE, e.g. JST)
+tzdata
+
 # General purpose HTTP client (fallback)
 requests

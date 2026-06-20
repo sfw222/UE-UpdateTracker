@@ -1,17 +1,22 @@
 # main.py
 # This script will contain the core logic for checking Unreal Engine updates.
 import os
+import re
+import sys
 import requests
 from github import Github
 from github.GithubException import UnknownObjectException
 from google import genai
-import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 UE_REPO_NAME = "EpicGames/UnrealEngine" # Target repository
 raw_limit = os.environ.get("COMMIT_SCAN_LIMIT") # Keep for manual override
 COMMIT_SCAN_LIMIT = int(raw_limit) if raw_limit and raw_limit.isdigit() else None
 UE_BRANCH = os.environ.get("UE_BRANCH", "ue5-main") # Target branch
+
+# Timeout (seconds) for outbound HTTP calls (GitHub GraphQL, Slack, Discord).
+REQUEST_TIMEOUT = 30
 
 
 def fetch_new_commits(github_client):
@@ -31,7 +36,7 @@ def fetch_new_commits(github_client):
             new_commits = list(commits[:COMMIT_SCAN_LIMIT])
             new_commits.reverse() # Oldest to newest
         else:
-            since_time = datetime.utcnow() - timedelta(hours=24)
+            since_time = datetime.now(timezone.utc) - timedelta(hours=24)
             print(f"Scheduled run: Fetching commits from branch '{UE_BRANCH}' since {since_time.isoformat()} UTC...")
             commits = repo.get_commits(sha=UE_BRANCH, since=since_time)
             new_commits = list(commits)
@@ -54,17 +59,21 @@ def filter_commit(commit):
     Returns True if the commit is potentially important, False otherwise.
     """
     commit_message = commit.commit.message.lower()
+    # commit.files is a PaginatedList; materialize it once so we don't trigger a
+    # fresh paginated API fetch on every check below. (PaginatedList also has no
+    # __bool__/__len__, so `not commit.files` would always be False.)
+    files = list(commit.files)
+    # Ignore merge/empty commits with no file changes
+    if not files:
+        return False
     # Ignore commits that only touch documentation
-    if all(f.filename.startswith("Documentation/") for f in commit.files):
-        return False
-    # Ignore simple typo fixes
-    if "typo" in commit_message and commit.files.totalCount == 1:
-        return False
-    # Ignore merge commits without file changes
-    if commit.parents and len(commit.parents) > 1 and not commit.files:
+    if all(f.filename.startswith("Documentation/") for f in files):
         return False
     # Ignore localization-only changes
-    if all("Localization/" in f.filename for f in commit.files):
+    if all("Localization/" in f.filename for f in files):
+        return False
+    # Ignore simple typo fixes
+    if "typo" in commit_message and len(files) == 1:
         return False
     return True
 
@@ -133,7 +142,8 @@ def _run_graphql_query(query, variables, pat):
     response = requests.post(
         'https://api.github.com/graphql',
         json={'query': query, 'variables': variables},
-        headers=headers
+        headers=headers,
+        timeout=REQUEST_TIMEOUT
     )
     if response.status_code == 200:
         result = response.json()
@@ -221,41 +231,99 @@ def create_discussion(repo_name, title, body, pat, category_name="Daily Reports"
         return False
 
 
+def _github_md_to_slack_mrkdwn(text):
+    """Convert the GitHub-flavored Markdown report into Slack mrkdwn.
+
+    Slack mrkdwn differs from GitHub Markdown: it has no '#' headers, uses
+    *bold* (single asterisk), and links are <url|text> instead of [text](url).
+    """
+    lines = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        # Horizontal rule -> a visual separator (Slack mrkdwn has no '---' rule)
+        if stripped in ("---", "***", "___"):
+            lines.append("───────────────")
+            continue
+        # Headers (#, ##, ###...) -> a bold line
+        m = re.match(r"^\s*#{1,6}\s+(.*)$", line)
+        if m:
+            lines.append(f"*{m.group(1).strip()}*")
+            continue
+        lines.append(line)
+    converted = "\n".join(lines)
+    # [text](url) -> <url|text>
+    converted = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", r"<\2|\1>", converted)
+    # **bold** -> *bold*
+    converted = re.sub(r"\*\*([^*]+)\*\*", r"*\1*", converted)
+    return converted
+
+
+def _chunk_text_for_slack(text, limit=2900):
+    """Split text into <=limit-char chunks at line boundaries.
+
+    Slack 'section' block text fields are capped at 3000 chars; we keep a margin.
+    A single over-long line is hard-split as a last resort.
+    """
+    chunks = []
+    current = ""
+    for line in text.split("\n"):
+        while len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        candidate = line if not current else current + "\n" + line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def send_slack_notification(webhook_url, channel, message_text, title):
-    """Sends a notification to a Slack channel via a webhook."""
+    """Sends a notification to a Slack channel via a webhook.
+
+    The full report can easily exceed Slack's 3000-char per-section limit, so we
+    convert it to mrkdwn and split it across multiple 'section' blocks.
+    """
     print("---")
     print("Sending Slack notification...")
     try:
-        # Slack's mrkdwn format is slightly different from GitHub's.
-        # We'll send the title as a main header and the body as the rest of the message.
+        chunks = _chunk_text_for_slack(_github_md_to_slack_mrkdwn(message_text))
+
+        # Slack allows at most 50 blocks per message. Reserve room for the header,
+        # the divider, and (when truncating) the truncation notice, so the total
+        # stays <= 50: 47 sections + header + divider + notice = 50.
+        MAX_SECTION_BLOCKS = 47
+        truncated = len(chunks) > MAX_SECTION_BLOCKS
+        if truncated:
+            chunks = chunks[:MAX_SECTION_BLOCKS]
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": title[:150], "emoji": True}
+            },
+            {"type": "divider"},
+        ]
+        for chunk in chunks:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": chunk}})
+        if truncated:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "_… (message truncated)_"}})
+
         payload = {
             "channel": channel,
             "username": "UE Update Tracker",
             "icon_emoji": ":robot_face:",
             "text": f"*{title}*", # Fallback text for notifications
-            "blocks": [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": title,
-                        "emoji": True
-                    }
-                },
-                {
-                    "type": "divider"
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": message_text
-                    }
-                }
-            ]
+            "blocks": blocks
         }
-        
-        response = requests.post(webhook_url, json=payload)
+
+        response = requests.post(webhook_url, json=payload, timeout=REQUEST_TIMEOUT)
         response.raise_for_status() # Raise an exception for bad status codes
         print("Successfully sent Slack notification.")
         return True
@@ -282,12 +350,12 @@ def send_discord_notification(webhook_url, message_text, title):
                     "title": title,
                     "description": message_text,
                     "color": 3447003,  # A nice blue color, hex #3498db
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 }
             ]
         }
-        
-        response = requests.post(webhook_url, json=payload)
+
+        response = requests.post(webhook_url, json=payload, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         print("Successfully sent Discord notification.")
         return True
@@ -310,12 +378,12 @@ def main():
     
     if not pat:
         print("FATAL: UE_REPO_PAT environment variable not set.")
-        return
+        sys.exit(1)
     print("UE_REPO_PAT found.")
-        
+
     if not gemini_api_key:
         print("FATAL: GEMINI_API_KEY environment variable not set.")
-        return
+        sys.exit(1)
     print("GEMINI_API_KEY found.")
     
     try:
@@ -329,7 +397,7 @@ def main():
         print("Gemini API configured.")
     except Exception as e:
         print(f"FATAL: Failed to initialize APIs: {e}")
-        return
+        sys.exit(1)
 
     # --- Notification Target Check ---
     print("\n--- 2. Checking Notification Targets ---")
@@ -343,9 +411,18 @@ def main():
     has_slack_target = slack_webhook_url and slack_channel
     has_discord_target = discord_webhook_url
 
+    # A discussion repo without a PAT silently posts nowhere — warn explicitly.
+    # (We intentionally do NOT fall back to GITHUB_TOKEN: that would auto-post to
+    # the current repo, risking a leak if it is public. Discussion posting is
+    # opt-in via DISCUSSION_REPO_PAT on a private repo.)
+    if discussion_repo_name and not discussion_repo_pat:
+        print("Warning: DISCUSSION_REPO is set but DISCUSSION_REPO_PAT is missing. "
+              "GitHub Discussion posting will be skipped. Set DISCUSSION_REPO_PAT "
+              "(a PAT with 'discussions: write' on a private repo) to enable it.")
+
     if not has_discussion_target and not has_slack_target and not has_discord_target:
         print("FATAL: No notification target is configured. Please set at least one of the following: DISCUSSION_REPO/DISCUSSION_REPO_PAT, SLACK_WEBHOOK_URL/SLACK_CHANNEL, or DISCORD_WEBHOOK_URL.")
-        return
+        sys.exit(1)
     
     print("Notification target(s) configured correctly.")
     if has_discussion_target:
@@ -361,7 +438,7 @@ def main():
 
     if new_commits is None:
         print("Failed to fetch commits. Exiting.")
-        return
+        sys.exit(1)
 
     if not new_commits:
         print("No new commits found since last check. Exiting.")
@@ -382,44 +459,69 @@ def main():
     report_language = os.environ.get("REPORT_LANGUAGE", "Japanese")
     print(f"Report language set to: {report_language}")
     report_body = analyze_commits_in_bulk(ai_client, gemini_model_name, important_commits, report_language)
-    
+
+    # Date the report in the configured timezone (defaults to JST) so the daily
+    # title matches when readers receive it. time.strftime() uses the runner's
+    # UTC clock, which dates the report a day behind for JST readers.
+    report_tz = os.environ.get("REPORT_TIMEZONE", "Asia/Tokyo")
+    try:
+        report_date = datetime.now(ZoneInfo(report_tz)).strftime('%Y-%m-%d')
+    except Exception as e:
+        print(f"Warning: invalid REPORT_TIMEZONE '{report_tz}' ({e}); falling back to UTC.")
+        report_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    report_title = f"Unreal Engine Daily Report - {report_date}"
+
+    # Track (target_name, success) so the workflow can fail if nothing posted.
+    results = []
+
     if report_body:
-        report_title = f"Unreal Engine Daily Report - {time.strftime('%Y-%m-%d')}"
-        
         # --- 5a. Post to GitHub Discussion ---
         if has_discussion_target:
             print("\n--- 5a. Posting to GitHub Discussion ---")
             discussion_category = os.environ.get("DISCUSSION_CATEGORY", "Daily Reports")
             print(f"Attempting to post to repository '{discussion_repo_name}' in category: '{discussion_category}'")
-            create_discussion(discussion_repo_name, report_title, report_body, discussion_repo_pat, category_name=discussion_category)
+            results.append(("GitHub Discussion", create_discussion(discussion_repo_name, report_title, report_body, discussion_repo_pat, category_name=discussion_category)))
         else:
             print("\n--- 5a. GitHub Discussion target not configured. Skipping. ---")
 
         # --- 5b. Post to Slack ---
         if has_slack_target:
             print("\n--- 5b. Posting to Slack ---")
-            send_slack_notification(slack_webhook_url, slack_channel, report_body, report_title)
+            results.append(("Slack", send_slack_notification(slack_webhook_url, slack_channel, report_body, report_title)))
         else:
             print("\n--- 5b. Slack target not configured. Skipping. ---")
 
         # --- 5c. Post to Discord ---
         if has_discord_target:
             print("\n--- 5c. Posting to Discord ---")
-            send_discord_notification(discord_webhook_url, report_body, report_title)
+            results.append(("Discord", send_discord_notification(discord_webhook_url, report_body, report_title)))
         else:
             print("\n--- 5c. Discord target not configured. Skipping. ---")
 
     else:
         print("Failed to generate report from AI. No content to post.")
-        # Notify on AI failure
+        # Notify on AI failure (a Discussion needs a body, so Slack/Discord only)
         error_message = "Error: Failed to generate the report from AI. No content is available."
-        report_title = f"Unreal Engine Daily Report - {time.strftime('%Y-%m-%d')}"
         if has_slack_target:
             print("\n--- Handling Slack Notification for AI Failure ---")
-            send_slack_notification(slack_webhook_url, slack_channel, error_message, report_title)
+            results.append(("Slack", send_slack_notification(slack_webhook_url, slack_channel, error_message, report_title)))
         if has_discord_target:
             print("\n--- Handling Discord Notification for AI Failure ---")
-            send_discord_notification(discord_webhook_url, error_message, report_title)
+            results.append(("Discord", send_discord_notification(discord_webhook_url, error_message, report_title)))
+
+    # --- Delivery summary ---
+    print("\n--- Delivery summary ---")
+    for name, ok in results:
+        print(f"  {'OK    ' if ok else 'FAILED'}: {name}")
+    if report_body is None:
+        # AI generation failed: the daily report was never produced/delivered, so
+        # fail the run even if no Slack/Discord error notice could be sent (e.g.
+        # only GitHub Discussion is configured, which has nothing to post).
+        print("FATAL: report generation failed; no report was delivered.")
+        sys.exit(1)
+    if results and not any(ok for _, ok in results):
+        print("FATAL: all configured notification targets failed.")
+        sys.exit(1)
 
     # --- Finish ---
     print("\n=============================================")

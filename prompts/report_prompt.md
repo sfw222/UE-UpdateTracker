@@ -44,7 +44,7 @@ You are an expert Unreal Engine technical writer and a polyglot. Your task is to
 
 **Final Output Rules:**
 - The entire report, including headers, must be in **{report_language}**.
-- If no notable changes are found, output a single sentence in the target language stating that (e.g., "今週、特筆すべき更新はありませんでした。").
+- If no notable changes are found, output a single sentence in the target language stating that (e.g., "本日、特筆すべき更新はありませんでした。").
 - Provide only the Markdown report without any introductory or concluding remarks.
 - If you have omitted items that you have determined to be of low importance, please state at the end of the report that you have omitted some of them.
 
