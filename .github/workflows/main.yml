@@ -16,7 +16,7 @@ on:
         required: false
         default: ''
       discussion_category:
-        description: 'GitHub Discussion 投稿分类。默认: Daily Reports'
+        description: 'GitHub Discussion 投稿分类。默认: 日报'
         required: false
         default: ''
       gemini_model:
@@ -70,7 +70,7 @@ jobs:
       REPORT_LANGUAGE: ${{ github.event.inputs.report_language || vars.REPORT_LANGUAGE || 'Chinese' }}
       REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE || 'Asia/Tokyo' }}
       GEMINI_MODEL: ${{ github.event.inputs.gemini_model || vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
-      DISCUSSION_CATEGORY: ${{ github.event.inputs.discussion_category || vars.DISCUSSION_CATEGORY || 'Daily Reports' }}
+      DISCUSSION_CATEGORY: ${{ github.event.inputs.discussion_category || vars.DISCUSSION_CATEGORY || '日报' }}
       COMMIT_SCAN_LIMIT: ${{ github.event.inputs.commit_scan_limit }}
       SLACK_WEBHOOK_URL: ${{ github.event.inputs.slack_webhook_url || secrets.SLACK_WEBHOOK_URL }}
       SLACK_CHANNEL: ${{ github.event.inputs.slack_channel || secrets.SLACK_CHANNEL }}

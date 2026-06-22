@@ -166,7 +166,7 @@ def _run_graphql_query(query, variables, pat):
     else:
         raise Exception(f"Query failed with status code {response.status_code}: {response.text}")
 
-def get_repository_and_category_ids(repo_name, pat, category_name="Daily Reports"):
+def get_repository_and_category_ids(repo_name, pat, category_name="日报"):
     """Gets the repository and discussion category IDs using the GraphQL API."""
     owner, name = repo_name.split('/')
     query = """
@@ -204,7 +204,7 @@ def get_repository_and_category_ids(repo_name, pat, category_name="Daily Reports
         
     return repo_id, category_id
 
-def create_discussion(repo_name, title, body, pat, category_name="Daily Reports"):
+def create_discussion(repo_name, title, body, pat, category_name="日报"):
     """Creates a new GitHub Discussion using the GraphQL API."""
     print("---")
     print("正在通过 GraphQL 创建 GitHub Discussion...")
@@ -648,7 +648,7 @@ def main():
     # --- 5a. Post to GitHub Discussion ---
     if has_discussion_target:
         print("\n--- 5a. 发布到 GitHub Discussion ---")
-        discussion_category = os.environ.get("DISCUSSION_CATEGORY", "Daily Reports")
+        discussion_category = os.environ.get("DISCUSSION_CATEGORY", "日报")
         print(f"正在尝试发布到仓库 '{discussion_repo_name}'，分类：'{discussion_category}'")
         results.append(("GitHub Discussion", create_discussion(discussion_repo_name, report_title, report_body, discussion_repo_pat, category_name=discussion_category)))
     else:
