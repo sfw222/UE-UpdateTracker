@@ -48,7 +48,7 @@
   - **Commit Scan Limit**：手动运行时扫描的最近提交数量。默认为过去 24 小时。
   - **UE Branches**：以逗号分隔指定追踪分支（如 `ue5-main,ue6-main`）。默认为 `ue5-main,ue6-main`。
   - **Discussion Category**：报告发布到的 Discussion 分类名称。默认为 `日报`。
-  - **Gemini Model**：分析使用的 AI 模型名称。默认为 `gemini-3.5-flash`。
+  - **Gemini Model**：分析使用的 AI 模型名称。默认为 `gemini-2.5-flash`。
   - **Slack Webhook URL**：临时使用的 Slack Webhook URL，会覆盖 Secret 中的值。
   - **Slack Channel**：临时使用的 Slack 频道名称，会覆盖 Secret 中的值。
   - **Discord Webhook URL**：临时使用的 Discord Webhook URL，会覆盖 Secret 中的值。
@@ -57,7 +57,7 @@
   定时运行和手动运行的默认值可在仓库的 Variables 中修改。在 `Settings` > `Secrets and variables` > `Actions` 的 `Variables` 标签页中设置以下内容。
   - `REPORT_LANGUAGE`：默认报告语言（如 `Chinese`）。
   - `DISCUSSION_CATEGORY`：默认发布分类名称（如 `日报`）。
-  - `GEMINI_MODEL`：默认使用的 AI 模型。默认为 `gemini-3.5-flash`。如需更高质量，可改为 `gemini-2.5-pro` 等。
+  - `GEMINI_MODEL`：默认使用的 AI 模型。默认为 `gemini-2.5-flash`。如需更高质量，可改为 `gemini-2.5-pro` 等。
   - `REPORT_TIMEZONE`：报告标题日期的时区。默认为 `Asia/Tokyo`。中国用户可设为 `Asia/Shanghai`。
   - `UE_BRANCHES`：以逗号分隔指定监控分支（如 `ue5-main,ue6-main` 或 `release`）。默认为 `ue5-main,ue6-main`。指定多个时，各分支的报告在同一个帖子内按标题分开并列展示（Discord 由于字数限制会自动拆分为多条消息）。此外，传统的单分支 `UE_BRANCH` Variable 仍可兼容使用（仅在 `UE_BRANCHES` 未设置时被引用）。
 

@@ -20,7 +20,7 @@ on:
         required: false
         default: ''
       gemini_model:
-        description: '分析使用的 Gemini 模型。默认: gemini-3.5-flash'
+        description: '分析使用的 Gemini 模型。默认: gemini-2.5-flash'
         required: false
         default: ''
       slack_webhook_url:
@@ -69,7 +69,7 @@ jobs:
       UE_BRANCHES: ${{ github.event.inputs.ue_branches || vars.UE_BRANCHES || vars.UE_BRANCH || 'ue5-main,ue6-main' }}
       REPORT_LANGUAGE: ${{ github.event.inputs.report_language || vars.REPORT_LANGUAGE || 'Chinese' }}
       REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE || 'Asia/Tokyo' }}
-      GEMINI_MODEL: ${{ github.event.inputs.gemini_model || vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
+      GEMINI_MODEL: ${{ github.event.inputs.gemini_model || vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
       DISCUSSION_CATEGORY: ${{ github.event.inputs.discussion_category || vars.DISCUSSION_CATEGORY || '日报' }}
       COMMIT_SCAN_LIMIT: ${{ github.event.inputs.commit_scan_limit }}
       SLACK_WEBHOOK_URL: ${{ github.event.inputs.slack_webhook_url || secrets.SLACK_WEBHOOK_URL }}

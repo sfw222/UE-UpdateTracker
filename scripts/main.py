@@ -550,7 +550,7 @@ def main():
         github_client = Github(pat)
         print("GitHub 客户端初始化完成。")
         
-        gemini_model_name = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+        gemini_model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
         print(f"正在配置 Gemini API，模型：{gemini_model_name}...")
         ai_client = genai.Client(api_key=gemini_api_key)
         print("Gemini API 配置完成。")
