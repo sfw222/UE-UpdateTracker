@@ -2,7 +2,7 @@
 
 [日本語版はこちら](https://github.com/pafuhana1213/UnrealEngine-UpdateTracker)
 
-本项目是一个自动化工具，定期监控 Unreal Engine 私有 GitHub 仓库的更新，使用 AI（Google Gemini）对重要变更（如新功能和规格变更）进行摘要，并以报告形式发布到 GitHub Discussions。
+本项目是一个自动化工具，定期监控 Unreal Engine 私有 GitHub 仓库的更新，使用 AI（智谱 GLM）对重要变更（如新功能和规格变更）进行摘要，并以报告形式发布到 GitHub Discussions。
 
 <table><tr><td>
 <img width="644" alt="image" src="https://github.com/pafuhana1213/Screenshot/blob/master/Report_sample_jp.png" />
@@ -15,7 +15,7 @@
 1. **Fork 本仓库**（点击右上角 Fork 按钮）
 2. **设置 Secrets**（`Settings` > `Secrets and variables` > `Actions`）：
    - `UE_REPO_PAT`：能访问 `EpicGames/UnrealEngine` 私有仓库的 [Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
-   - `GEMINI_API_KEY`：从 [Google AI Studio](https://aistudio.google.com/app/apikey) 获取的 API 密钥
+   - `ZHIPU_API_KEY`：从 [智谱 AI 开放平台](https://open.bigmodel.cn/) 获取的 API 密钥
 3. **配置通知目标**（至少设置一种）：
    - **GitHub Discussion**：`DISCUSSION_REPO`（目标仓库，格式 `用户名/仓库名`）+ `DISCUSSION_REPO_PAT`（具有 Discussions 写入权限的 PAT）
    - **Slack**：`SLACK_WEBHOOK_URL` + `SLACK_CHANNEL`
@@ -35,7 +35,7 @@
 
 - **自动更新检查**：通过 GitHub Actions，每天定时（北京时间 7:00 / UTC 23:00）或手动获取 UE 仓库的最新提交。
 - **多分支并行追踪**：默认同时追踪 `ue5-main` 和 `ue6-main`（可通过 `UE_BRANCHES` 更改）。
-- **AI 摘要**：Gemini API 分析提交内容，按"新功能""重大变更""性能优化""Bug 修复"等类别分类并摘要。
+- **AI 摘要**：智谱 GLM API 分析提交内容，按"新功能""重大变更""性能优化""Bug 修复"等类别分类并摘要。
 - **Discussion 发布**：将生成的报告以"Unreal Engine 每日报告"的形式发布到仓库的 GitHub Discussions。各追踪分支（UE5 / UE6 等）在同一报告内按标题分开并列展示。
 - **Slack 通知**：可同时将报告通知到指定的 Slack 频道。
 - **Discord 通知**：可同时将报告通知到指定的 Discord 频道。
@@ -48,7 +48,7 @@
   - **Commit Scan Limit**：手动运行时扫描的最近提交数量。默认为过去 24 小时。
   - **UE Branches**：以逗号分隔指定追踪分支（如 `ue5-main,ue6-main`）。默认为 `ue5-main,ue6-main`。
   - **Discussion Category**：报告发布到的 Discussion 分类名称。默认为 `日报`。
-  - **Gemini Model**：分析使用的 AI 模型名称。默认为 `gemini-2.5-flash`。
+  - **AI 模型**：分析使用的 AI 模型名称。默认为 `glm-4.7-flash`。
   - **Slack Webhook URL**：临时使用的 Slack Webhook URL，会覆盖 Secret 中的值。
   - **Slack Channel**：临时使用的 Slack 频道名称，会覆盖 Secret 中的值。
   - **Discord Webhook URL**：临时使用的 Discord Webhook URL，会覆盖 Secret 中的值。
@@ -57,7 +57,7 @@
   定时运行和手动运行的默认值可在仓库的 Variables 中修改。在 `Settings` > `Secrets and variables` > `Actions` 的 `Variables` 标签页中设置以下内容。
   - `REPORT_LANGUAGE`：默认报告语言（如 `Chinese`）。
   - `DISCUSSION_CATEGORY`：默认发布分类名称（如 `日报`）。
-  - `GEMINI_MODEL`：默认使用的 AI 模型。默认为 `gemini-2.5-flash`。如需更高质量，可改为 `gemini-2.5-pro` 等。
+  - `ZHIPU_MODEL`：默认使用的 AI 模型。默认为 `glm-4.7-flash`。如需更高质量，可改为 `glm-4.7-plus` 等。
   - `REPORT_TIMEZONE`：报告标题日期的时区。默认为 `Asia/Tokyo`。中国用户可设为 `Asia/Shanghai`。
   - `UE_BRANCHES`：以逗号分隔指定监控分支（如 `ue5-main,ue6-main` 或 `release`）。默认为 `ue5-main,ue6-main`。指定多个时，各分支的报告在同一个帖子内按标题分开并列展示（Discord 由于字数限制会自动拆分为多条消息）。此外，传统的单分支 `UE_BRANCH` Variable 仍可兼容使用（仅在 `UE_BRANCHES` 未设置时被引用）。
 
@@ -91,7 +91,7 @@ Unreal Engine 的更新历史是基于 Epic Games 许可协议、仅允许授权
 - **用户责任**：本工具已谨慎设计以遵守 Unreal Engine 许可协议，但最终的运行责任由用户承担。特别是报告发布目标（`DISCUSSION_REPO`）务必指定为限制访问的私有仓库。发布到公开仓库可能构成许可违规。
 
 - **API 密钥和计费**：
-  - 本工具使用 Google Gemini API，根据使用量可能产生费用。
+  - 本工具使用智谱 GLM API，根据使用量可能产生费用。
   - Fork 本仓库使用时，Fork 方所有者自行承担其 API 密钥的全部计费责任。
   - 为确实遵守 Unreal Engine 条款，强烈建议使用发送数据不会用于 AI 训练的 API 密钥。
 

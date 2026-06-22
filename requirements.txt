@@ -1,8 +1,8 @@
 # For GitHub API
 PyGithub
 
-# For Google Gemini API (unified Google GenAI SDK; replaces the deprecated google-generativeai)
-google-genai
+# 用于智谱 GLM API（兼容 OpenAI 协议）
+openai
 
 # For local development (reading .env files)
 python-dotenv

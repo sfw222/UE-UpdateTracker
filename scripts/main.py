@@ -7,7 +7,7 @@ import time
 import requests
 from github import Github
 from github.GithubException import UnknownObjectException
-from google import genai
+from openai import OpenAI
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -91,17 +91,17 @@ def filter_commit(commit):
     return True
 
 
-def analyze_commits_in_bulk(client, model_name, commits, report_language="Japanese"):
+def analyze_commits_in_bulk(client, model_name, commits, report_language="Chinese"):
     """
-    Analyzes a list of commits in bulk with the Gemini API and returns a formatted Markdown report.
+    使用智谱 GLM API 批量分析提交列表，返回格式化的 Markdown 报告。
     """
     print(f"正在聚合 {len(commits)} 条提交以进行批量分析...")
     
     commits_data = []
     for commit in commits:
-        # IMPORTANT: To comply with Epic Games' license and prevent leaking sensitive information,
-        # DO NOT include file contents or diffs in the data sent to the AI.
-        # Only commit messages and file paths are used.
+        # 重要：遵守 Epic Games 许可协议，防止泄露敏感信息，
+        # 绝不将文件内容或 diff 发送给 AI。
+        # 仅使用提交信息和文件路径。
         file_list = "\n".join([f"- {file.filename}" for file in commit.files])
         commit_info = f"""---
 提交: {commit.sha[:7]}
@@ -116,7 +116,7 @@ URL: {commit.html_url}
     aggregated_commits = "\n".join(commits_data)
 
     try:
-        # Load the prompt from the external file
+        # 从外部文件加载提示词
         with open("prompts/report_prompt.md", "r", encoding="utf-8") as f:
             prompt_template = f.read()
         
@@ -125,21 +125,25 @@ URL: {commit.html_url}
             aggregated_commits=aggregated_commits
         )
 
-        print(f"  > 正在向 Gemini 发送 {len(commits)} 条提交的聚合提示词（语言：{report_language}）...")
+        print(f"  > 正在向 GLM 发送 {len(commits)} 条提交的聚合提示词（语言：{report_language}）...")
 
-        # Retry transient errors (503, 429, etc.) up to 3 times with backoff
+        # 遇到临时错误（503、429 等）最多重试 3 次，指数退避
         max_retries = 3
         last_error = None
         for attempt in range(max_retries):
             try:
-                response = client.models.generate_content(model=model_name, contents=prompt)
-                break  # Success — exit retry loop
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3
+                )
+                break  # 成功 — 退出重试循环
             except Exception as e:
                 last_error = e
                 err_str = str(e)
-                if attempt < max_retries - 1 and ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str or "RESOURCE_EXHAUSTED" in err_str):
-                    wait = 5 * (2 ** attempt)  # 5, 10, 20 seconds
-                    print(f"  ⚠ Gemini 暂时不可用（{e}），{wait}s 后重试（{attempt + 2}/{max_retries}）...")
+                if attempt < max_retries - 1 and ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str or "RESOURCE_EXHAUSTED" in err_str or "rate_limit" in err_str.lower()):
+                    wait = 5 * (2 ** attempt)  # 5, 10, 20 秒
+                    print(f"  ⚠ GLM 暂时不可用（{e}），{wait}s 后重试（{attempt + 2}/{max_retries}）...")
                     time.sleep(wait)
                     continue
                 raise
@@ -147,13 +151,15 @@ URL: {commit.html_url}
         if last_error is not None:
             raise last_error
 
-        # --- Start of Detailed Logging ---
-        print(f"--- 批量响应 ---\n{response.text}\n--------------------\n")
-        # --- End of Detailed Logging ---
+        result_text = response.choices[0].message.content
 
-        print(f"  < 已收到 Gemini 的批量响应。")
+        # --- 详细日志（调试时取消注释） ---
+        print(f"--- 批量响应 ---\n{result_text}\n--------------------\n")
+        # --- 详细日志结束 ---
+
+        print(f"  < 已收到 GLM 的批量响应。")
         
-        return response.text
+        return result_text
 
     except FileNotFoundError:
         print("致命错误：未找到 prompts/report_prompt.md。")
@@ -533,27 +539,29 @@ def main():
     # --- API Setup ---
     print("\n--- 1. 初始化 API ---")
     pat = os.environ.get("UE_REPO_PAT")
-    gemini_api_key = os.environ.get("GEMINI_API_KEY")
+    # 支持新旧环境变量名：ZHIPU_API_KEY 优先，GEMINI_API_KEY 作为回退
+    zhipu_api_key = os.environ.get("ZHIPU_API_KEY") or os.environ.get("GEMINI_API_KEY")
     
     if not pat:
         print("致命错误：未设置 UE_REPO_PAT 环境变量。")
         sys.exit(1)
     print("UE_REPO_PAT 已就绪。")
 
-    if not gemini_api_key:
-        print("致命错误：未设置 GEMINI_API_KEY 环境变量。")
+    if not zhipu_api_key:
+        print("致命错误：未设置 ZHIPU_API_KEY 环境变量。")
         sys.exit(1)
-    print("GEMINI_API_KEY 已就绪。")
+    print("ZHIPU_API_KEY 已就绪。")
     
     try:
         print("正在初始化 GitHub 客户端...")
         github_client = Github(pat)
         print("GitHub 客户端初始化完成。")
         
-        gemini_model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-        print(f"正在配置 Gemini API，模型：{gemini_model_name}...")
-        ai_client = genai.Client(api_key=gemini_api_key)
-        print("Gemini API 配置完成。")
+        # 支持新旧环境变量名：ZHIPU_MODEL 优先，GEMINI_MODEL 作为回退
+        ai_model_name = os.environ.get("ZHIPU_MODEL") or os.environ.get("GEMINI_MODEL") or "glm-4.7-flash"
+        print(f"正在配置智谱 GLM API，模型：{ai_model_name}...")
+        ai_client = OpenAI(api_key=zhipu_api_key, base_url="https://open.bigmodel.cn/api/paas/v4/")
+        print("智谱 GLM API 配置完成。")
     except Exception as e:
         print(f"致命错误：初始化 API 失败：{e}")
         sys.exit(1)
@@ -604,7 +612,7 @@ def main():
         print(f"\n--- 分支：{label} ({branch}) ---")
         try:
             branch_results.append(
-                process_branch(github_client, ai_client, branch, label, gemini_model_name, report_language)
+                process_branch(github_client, ai_client, branch, label, ai_model_name, report_language)
             )
         except Exception as e:
             # Isolate per-branch failures so one bad branch doesn't abort the rest.
