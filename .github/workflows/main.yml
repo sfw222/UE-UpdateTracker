@@ -12,7 +12,7 @@ on:
         required: false
         default: ''
       report_language:
-        description: '日报语言（如 Chinese, Japanese, English）。默认: Japanese'
+        description: '日报语言（如 Chinese, Japanese, English）。默认: Chinese'
         required: false
         default: ''
       discussion_category:
@@ -67,7 +67,7 @@ jobs:
       # Branches to track. vars.UE_BRANCH is kept as a fallback so existing
       # single-branch setups (which configured UE_BRANCH) keep working.
       UE_BRANCHES: ${{ github.event.inputs.ue_branches || vars.UE_BRANCHES || vars.UE_BRANCH || 'ue5-main,ue6-main' }}
-      REPORT_LANGUAGE: ${{ github.event.inputs.report_language || vars.REPORT_LANGUAGE || 'Japanese' }}
+      REPORT_LANGUAGE: ${{ github.event.inputs.report_language || vars.REPORT_LANGUAGE || 'Chinese' }}
       REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE || 'Asia/Tokyo' }}
       GEMINI_MODEL: ${{ github.event.inputs.gemini_model || vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
       DISCUSSION_CATEGORY: ${{ github.event.inputs.discussion_category || vars.DISCUSSION_CATEGORY || 'Daily Reports' }}

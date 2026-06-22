@@ -582,7 +582,7 @@ def main():
     targets = get_target_branches()
     print(f"正在追踪 {len(targets)} 个分支：{', '.join(branch for _, branch in targets)}")
 
-    report_language = os.environ.get("REPORT_LANGUAGE", "Japanese")
+    report_language = os.environ.get("REPORT_LANGUAGE", "Chinese")
     print(f"报告语言设置为：{report_language}")
 
     branch_results = []
