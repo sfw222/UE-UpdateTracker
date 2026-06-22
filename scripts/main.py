@@ -5,7 +5,7 @@ import re
 import sys
 import time
 import requests
-from github import Github
+from github import Auth, Github
 from github.GithubException import UnknownObjectException
 from openai import OpenAI
 from datetime import datetime, timedelta, timezone
@@ -554,7 +554,7 @@ def main():
     
     try:
         print("正在初始化 GitHub 客户端...")
-        github_client = Github(pat)
+        github_client = Github(auth=Auth.Token(pat))
         print("GitHub 客户端初始化完成。")
         
         # 支持新旧环境变量名：ZHIPU_MODEL 优先，GEMINI_MODEL 作为回退
