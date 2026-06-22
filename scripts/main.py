@@ -126,13 +126,27 @@ URL: {commit.html_url}
         )
 
         print(f"  > 正在向 Gemini 发送 {len(commits)} 条提交的聚合提示词（语言：{report_language}）...")
-        
-        # --- Start of Detailed Logging ---
-        # print(f"\n--- BULK PROMPT ---\n{prompt}\n--------------------")
-        # --- End of Detailed Logging ---
 
-        response = client.models.generate_content(model=model_name, contents=prompt)
-        
+        # Retry transient errors (503, 429, etc.) up to 3 times with backoff
+        max_retries = 3
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(model=model_name, contents=prompt)
+                break  # Success — exit retry loop
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                if attempt < max_retries - 1 and ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str or "RESOURCE_EXHAUSTED" in err_str):
+                    wait = 5 * (2 ** attempt)  # 5, 10, 20 seconds
+                    print(f"  ⚠ Gemini 暂时不可用（{e}），{wait}s 后重试（{attempt + 2}/{max_retries}）...")
+                    time.sleep(wait)
+                    continue
+                raise
+
+        if last_error is not None:
+            raise last_error
+
         # --- Start of Detailed Logging ---
         print(f"--- 批量响应 ---\n{response.text}\n--------------------\n")
         # --- End of Detailed Logging ---
