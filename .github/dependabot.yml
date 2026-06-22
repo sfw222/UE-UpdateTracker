@@ -1,17 +1,17 @@
 # .github/dependabot.yml
 version: 2
 updates:
-  # Python/pipの依存関係を維持する
+  # 维护 Python/pip 的依赖关系
   - package-ecosystem: "pip"
-    # requirements.txtが置かれているルートディレクトリを指定
+    # requirements.txt 所在的根目录
     directory: "/"
-    # 更新をチェックする頻度（毎週月曜日）
+    # 更新检查频率（每周一）
     schedule:
       interval: "weekly"
       day: "monday"
-    # Dependabotが作成するPull Requestにラベルを付ける
+    # Dependabot 创建的 Pull Request 标签
     labels:
       - "dependencies"
-    # コミットメッセージのプレフィックスをカスタマイズ
+    # 自定义提交消息前缀
     commit-message:
       prefix: "chore(deps)"

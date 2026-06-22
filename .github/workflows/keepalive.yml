@@ -1,4 +1,4 @@
-name: Prevent scheduled workflow from being automatically disabled
+name: 防止定时工作流被自动禁用
 
 on:
   schedule:
@@ -15,15 +15,15 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
         with:
           ref: keep-active
 
-      - name: Commit and push empty commit
+      - name: 提交并推送空提交
         env:
           NAME: 'github-actions[bot]'
           EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'
         run: |
-          git -c user.name="$NAME" -c user.email="$EMAIL" commit --allow-empty -m 'Automated commit'
+          git -c user.name="$NAME" -c user.email="$EMAIL" commit --allow-empty -m '自动提交（保持活跃）'
           git push

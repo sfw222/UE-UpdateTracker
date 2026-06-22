@@ -38,31 +38,31 @@ def fetch_new_commits(github_client, branch):
     - If COMMIT_SCAN_LIMIT is set (manual run), it fetches that many recent commits.
     - Otherwise (scheduled run), it fetches commits from the last 24 hours.
     """
-    print(f"Fetching commits from {UE_REPO_NAME} on branch {branch}...")
+    print(f"正在从 {UE_REPO_NAME} 获取分支 {branch} 的提交...")
     try:
         repo = github_client.get_repo(UE_REPO_NAME)
-        print("Successfully accessed repository.")
+        print("成功访问仓库。")
 
         if COMMIT_SCAN_LIMIT:
-            print(f"Manual override: Fetching the latest {COMMIT_SCAN_LIMIT} commits from branch '{branch}'.")
+            print(f"手动覆盖：正在获取分支 '{branch}' 的最新 {COMMIT_SCAN_LIMIT} 条提交。")
             commits = repo.get_commits(sha=branch)
             new_commits = list(commits[:COMMIT_SCAN_LIMIT])
             new_commits.reverse() # Oldest to newest
         else:
             since_time = datetime.now(timezone.utc) - timedelta(hours=24)
-            print(f"Scheduled run: Fetching commits from branch '{branch}' since {since_time.isoformat()} UTC...")
+            print(f"定时运行：正在获取分支 '{branch}' 自 {since_time.isoformat()} UTC 以来的提交...")
             commits = repo.get_commits(sha=branch, since=since_time)
             new_commits = list(commits)
             # Commits from .get_commits(since=...) are already in chronological order.
 
-        print(f"Found {len(new_commits)} new commits.")
+        print(f"发现 {len(new_commits)} 条新提交。")
         return new_commits
 
     except UnknownObjectException:
-        print(f"Error: Repository '{UE_REPO_NAME}' not found. Check PAT permissions.")
+        print(f"错误：仓库 '{UE_REPO_NAME}' 未找到。请检查 PAT 权限。")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred while fetching commits: {e}")
+        print(f"获取提交时发生意外错误：{e}")
         return None
 
 
@@ -95,7 +95,7 @@ def analyze_commits_in_bulk(client, model_name, commits, report_language="Japane
     """
     Analyzes a list of commits in bulk with the Gemini API and returns a formatted Markdown report.
     """
-    print(f"Aggregating {len(commits)} commits for bulk analysis...")
+    print(f"正在聚合 {len(commits)} 条提交以进行批量分析...")
     
     commits_data = []
     for commit in commits:
@@ -104,11 +104,11 @@ def analyze_commits_in_bulk(client, model_name, commits, report_language="Japane
         # Only commit messages and file paths are used.
         file_list = "\n".join([f"- {file.filename}" for file in commit.files])
         commit_info = f"""---
-Commit: {commit.sha[:7]}
+提交: {commit.sha[:7]}
 URL: {commit.html_url}
-Message:
+信息:
 {commit.commit.message}
-Files Changed:
+变更文件:
 {file_list}
 """
         commits_data.append(commit_info)
@@ -125,7 +125,7 @@ Files Changed:
             aggregated_commits=aggregated_commits
         )
 
-        print(f"  > Sending aggregated prompt to Gemini for {len(commits)} commits (Language: {report_language})...")
+        print(f"  > 正在向 Gemini 发送 {len(commits)} 条提交的聚合提示词（语言：{report_language}）...")
         
         # --- Start of Detailed Logging ---
         # print(f"\n--- BULK PROMPT ---\n{prompt}\n--------------------")
@@ -134,18 +134,18 @@ Files Changed:
         response = client.models.generate_content(model=model_name, contents=prompt)
         
         # --- Start of Detailed Logging ---
-        print(f"--- BULK RESPONSE ---\n{response.text}\n--------------------\n")
+        print(f"--- 批量响应 ---\n{response.text}\n--------------------\n")
         # --- End of Detailed Logging ---
 
-        print(f"  < Received bulk response from Gemini.")
+        print(f"  < 已收到 Gemini 的批量响应。")
         
         return response.text
 
     except FileNotFoundError:
-        print("FATAL: prompts/report_prompt.md not found.")
+        print("致命错误：未找到 prompts/report_prompt.md。")
         return None
     except Exception as e:
-        print(f"Error analyzing commits in bulk with AI: {e}")
+        print(f"AI 批量分析提交时出错：{e}")
         return None
 
 
@@ -198,20 +198,20 @@ def get_repository_and_category_ids(repo_name, pat, category_name="Daily Reports
         if categories:
             fallback_category = categories[0]
             category_id = fallback_category["id"]
-            print(f"Warning: Discussion category '{category_name}' not found. Falling back to '{fallback_category['name']}'.")
+            print(f"警告：未找到 Discussion 分类 '{category_name}'。回退为 '{fallback_category['name']}'。")
         else:
-            raise Exception(f"No discussion categories found in the repository.")
+            raise Exception(f"仓库中未找到任何 Discussion 分类。")
         
     return repo_id, category_id
 
 def create_discussion(repo_name, title, body, pat, category_name="Daily Reports"):
     """Creates a new GitHub Discussion using the GraphQL API."""
     print("---")
-    print("Creating GitHub Discussion via GraphQL...")
+    print("正在通过 GraphQL 创建 GitHub Discussion...")
     try:
         repo_id, category_id = get_repository_and_category_ids(repo_name, pat, category_name)
-        print(f"Found Repository ID: {repo_id}")
-        print(f"Found Category ID: {category_id} for category '{category_name}'")
+        print(f"找到仓库 ID：{repo_id}")
+        print(f"找到分类 ID：{category_id}（分类名：'{category_name}'）")
 
         mutation_query = """
         mutation CreateDiscussion($repoId: ID!, $categoryId: ID!, $title: String!, $body: String!) {
@@ -236,11 +236,11 @@ def create_discussion(repo_name, title, body, pat, category_name="Daily Reports"
 
         result = _run_graphql_query(mutation_query, variables, pat)
         discussion_url = result["data"]["createDiscussion"]["discussion"]["url"]
-        print(f"Successfully created GitHub Discussion: {discussion_url}")
+        print(f"成功创建 GitHub Discussion：{discussion_url}")
         return True
 
     except Exception as e:
-        print(f"An error occurred while creating discussion: {e}")
+        print(f"创建 Discussion 时发生错误：{e}")
         return False
 
 
@@ -305,7 +305,7 @@ def send_slack_notification(webhook_url, channel, message_text, title):
     convert it to mrkdwn and split it across multiple 'section' blocks.
     """
     print("---")
-    print("Sending Slack notification...")
+    print("正在发送 Slack 通知...")
     try:
         chunks = _chunk_text(_github_md_to_slack_mrkdwn(message_text), 2900)
 
@@ -327,7 +327,7 @@ def send_slack_notification(webhook_url, channel, message_text, title):
         for chunk in chunks:
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": chunk}})
         if truncated:
-            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "_… (message truncated)_"}})
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "_…（消息已截断）_"}})
 
         payload = {
             "channel": channel,
@@ -339,10 +339,10 @@ def send_slack_notification(webhook_url, channel, message_text, title):
 
         response = requests.post(webhook_url, json=payload, timeout=REQUEST_TIMEOUT)
         response.raise_for_status() # Raise an exception for bad status codes
-        print("Successfully sent Slack notification.")
+        print("成功发送 Slack 通知。")
         return True
     except requests.exceptions.RequestException as e:
-        print(f"An error occurred while sending Slack notification: {e}")
+        print(f"发送 Slack 通知时发生错误：{e}")
         return False
 
 
@@ -377,7 +377,7 @@ def send_discord_notification(webhook_url, message_text, title):
     reported as success.
     """
     print("---")
-    print("Sending Discord notification...")
+    print("正在发送 Discord 通知...")
     # 3900 keeps a margin under the 4096 embed-description limit, leaving room for
     # the truncation notice appended to the final chunk when we hit the cap.
     chunks = _chunk_text(message_text, 3900)
@@ -388,7 +388,7 @@ def send_discord_notification(webhook_url, message_text, title):
     truncated = len(chunks) > MAX_MESSAGES
     if truncated:
         chunks = chunks[:MAX_MESSAGES]
-        chunks[-1] = chunks[-1] + "\n\n… (message truncated)"
+        chunks[-1] = chunks[-1] + "\n\n…（消息已截断）"
 
     total = len(chunks)
     all_ok = True
@@ -413,15 +413,15 @@ def send_discord_notification(webhook_url, message_text, title):
                     time.sleep(0.5)
             else:
                 all_ok = False
-                print(f"  Failed to send Discord message {i}/{total}.")
+                print(f"  发送 Discord 消息 {i}/{total} 失败。")
         except requests.exceptions.RequestException as e:
             all_ok = False
-            print(f"  An error occurred while sending Discord message {i}/{total}: {e}")
+            print(f"  发送 Discord 消息 {i}/{total} 时发生错误：{e}")
 
     if all_ok:
-        print(f"Successfully sent Discord notification ({total} message(s)).")
+        print(f"成功发送 Discord 通知（共 {total} 条消息）。")
     else:
-        print("Discord notification incomplete: one or more messages failed.")
+        print("Discord 通知未完成：一条或多条消息发送失败。")
     return all_ok
 
 def process_branch(github_client, ai_client, branch, label, model_name, report_language):
@@ -436,22 +436,22 @@ def process_branch(github_client, ai_client, branch, label, model_name, report_l
     """
     new_commits = fetch_new_commits(github_client, branch)
     if new_commits is None:
-        print(f"Failed to fetch commits for branch '{branch}'.")
+        print(f"获取分支 '{branch}' 的提交失败。")
         return {"label": label, "branch": branch, "status": "error", "body": None, "shas": []}
     if not new_commits:
-        print(f"No new commits found for branch '{branch}'.")
+        print(f"分支 '{branch}' 没有发现新提交。")
         return {"label": label, "branch": branch, "status": "empty", "body": None, "shas": []}
 
     important_commits = [commit for commit in new_commits if filter_commit(commit)]
     if not important_commits:
-        print(f"No potentially important commits found after filtering for branch '{branch}'.")
+        print(f"过滤后分支 '{branch}' 没有发现重要提交。")
         return {"label": label, "branch": branch, "status": "empty", "body": None, "shas": []}
 
-    print(f"Found {len(important_commits)} potentially important commits to analyze for '{branch}'.")
+    print(f"发现 {len(important_commits)} 条可能需要分析的重要提交（分支：'{branch}'）。")
     shas = [commit.sha for commit in important_commits]
     report_body = analyze_commits_in_bulk(ai_client, model_name, important_commits, report_language)
     if not report_body:
-        print(f"Failed to generate report from AI for branch '{branch}'.")
+        print(f"AI 为分支 '{branch}' 生成报告失败。")
         return {"label": label, "branch": branch, "status": "error", "body": None, "shas": shas}
 
     return {"label": label, "branch": branch, "status": "ok", "body": report_body, "shas": shas}
@@ -470,8 +470,8 @@ def _warn_duplicate_shas(branch_results):
             seen.setdefault(sha, []).append(result["label"])
     dups = {sha: labels for sha, labels in seen.items() if len(labels) > 1}
     if dups:
-        print(f"Warning: {len(dups)} commit(s) appear on multiple tracked branches "
-              f"(reported per-branch, not de-duplicated):")
+        print(f"警告：{len(dups)} 条提交出现在多个追踪分支中"
+              f"（按分支分别报告，未去重）：")
         for sha, labels in list(dups.items())[:20]:
             print(f"  {sha[:7]}: {', '.join(labels)}")
 
@@ -483,8 +483,17 @@ def _build_combined_report(branch_results, report_language):
     get a short localized placeholder so readers know the branch was checked.
     """
     is_ja = ("japan" in report_language.lower()) or ("日本" in report_language)
-    no_update = "_本日の注目すべき更新はありません。_" if is_ja else "_No notable updates today._"
-    failed_note = "_⚠️ レポート生成に失敗しました。_" if is_ja else "_⚠️ Failed to generate the report._"
+    is_zh = ("chinese" in report_language.lower()) or ("中文" in report_language) or ("中国" in report_language)
+    
+    if is_ja:
+        no_update = "_本日の注目すべき更新はありません。_"
+        failed_note = "_⚠️ レポート生成に失敗しました。_"
+    elif is_zh:
+        no_update = "_今天没有值得关注的更新。_"
+        failed_note = "_⚠️ 报告生成失败。_"
+    else:
+        no_update = "_No notable updates today._"
+        failed_note = "_⚠️ Failed to generate the report._"
 
     sections = []
     for result in branch_results:
@@ -504,39 +513,39 @@ def main():
     Main function to execute the update check.
     """
     print("=============================================")
-    print("Starting Unreal Engine Update Check Script")
+    print("启动 Unreal Engine 更新检查脚本")
     print("=============================================")
     
     # --- API Setup ---
-    print("\n--- 1. Setting up APIs ---")
+    print("\n--- 1. 初始化 API ---")
     pat = os.environ.get("UE_REPO_PAT")
     gemini_api_key = os.environ.get("GEMINI_API_KEY")
     
     if not pat:
-        print("FATAL: UE_REPO_PAT environment variable not set.")
+        print("致命错误：未设置 UE_REPO_PAT 环境变量。")
         sys.exit(1)
-    print("UE_REPO_PAT found.")
+    print("UE_REPO_PAT 已就绪。")
 
     if not gemini_api_key:
-        print("FATAL: GEMINI_API_KEY environment variable not set.")
+        print("致命错误：未设置 GEMINI_API_KEY 环境变量。")
         sys.exit(1)
-    print("GEMINI_API_KEY found.")
+    print("GEMINI_API_KEY 已就绪。")
     
     try:
-        print("Initializing GitHub client...")
+        print("正在初始化 GitHub 客户端...")
         github_client = Github(pat)
-        print("GitHub client initialized.")
+        print("GitHub 客户端初始化完成。")
         
         gemini_model_name = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
-        print(f"Configuring Gemini API with model: {gemini_model_name}...")
+        print(f"正在配置 Gemini API，模型：{gemini_model_name}...")
         ai_client = genai.Client(api_key=gemini_api_key)
-        print("Gemini API configured.")
+        print("Gemini API 配置完成。")
     except Exception as e:
-        print(f"FATAL: Failed to initialize APIs: {e}")
+        print(f"致命错误：初始化 API 失败：{e}")
         sys.exit(1)
 
     # --- Notification Target Check ---
-    print("\n--- 2. Checking Notification Targets ---")
+    print("\n--- 2. 检查通知目标 ---")
     discussion_repo_name = os.environ.get("DISCUSSION_REPO")
     discussion_repo_pat = os.environ.get("DISCUSSION_REPO_PAT")
     slack_webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
@@ -552,40 +561,40 @@ def main():
     # the current repo, risking a leak if it is public. Discussion posting is
     # opt-in via DISCUSSION_REPO_PAT on a private repo.)
     if discussion_repo_name and not discussion_repo_pat:
-        print("Warning: DISCUSSION_REPO is set but DISCUSSION_REPO_PAT is missing. "
-              "GitHub Discussion posting will be skipped. Set DISCUSSION_REPO_PAT "
-              "(a PAT with 'discussions: write' on a private repo) to enable it.")
+        print("警告：已设置 DISCUSSION_REPO 但缺少 DISCUSSION_REPO_PAT。"
+              "将跳过 GitHub Discussion 发布。请设置 DISCUSSION_REPO_PAT"
+              "（具有私有仓库 Discussions 写入权限的 PAT）以启用此功能。")
 
     if not has_discussion_target and not has_slack_target and not has_discord_target:
-        print("FATAL: No notification target is configured. Please set at least one of the following: DISCUSSION_REPO/DISCUSSION_REPO_PAT, SLACK_WEBHOOK_URL/SLACK_CHANNEL, or DISCORD_WEBHOOK_URL.")
+        print("致命错误：未配置任何通知目标。请至少设置以下之一：DISCUSSION_REPO/DISCUSSION_REPO_PAT、SLACK_WEBHOOK_URL/SLACK_CHANNEL 或 DISCORD_WEBHOOK_URL。")
         sys.exit(1)
     
-    print("Notification target(s) configured correctly.")
+    print("通知目标已正确配置。")
     if has_discussion_target:
-        print("- GitHub Discussion is enabled.")
+        print("- GitHub Discussion 已启用。")
     if has_slack_target:
-        print("- Slack Notification is enabled.")
+        print("- Slack 通知已启用。")
     if has_discord_target:
-        print("- Discord Notification is enabled.")
+        print("- Discord 通知已启用。")
 
     # --- Process Each Tracked Branch ---
-    print("\n--- 3. Processing Tracked Branches ---")
+    print("\n--- 3. 处理追踪分支 ---")
     targets = get_target_branches()
-    print(f"Tracking {len(targets)} branch(es): {', '.join(branch for _, branch in targets)}")
+    print(f"正在追踪 {len(targets)} 个分支：{', '.join(branch for _, branch in targets)}")
 
     report_language = os.environ.get("REPORT_LANGUAGE", "Japanese")
-    print(f"Report language set to: {report_language}")
+    print(f"报告语言设置为：{report_language}")
 
     branch_results = []
     for label, branch in targets:
-        print(f"\n--- Branch: {label} ({branch}) ---")
+        print(f"\n--- 分支：{label} ({branch}) ---")
         try:
             branch_results.append(
                 process_branch(github_client, ai_client, branch, label, gemini_model_name, report_language)
             )
         except Exception as e:
             # Isolate per-branch failures so one bad branch doesn't abort the rest.
-            print(f"Unexpected error while processing branch '{branch}': {e}")
+            print(f"处理分支 '{branch}' 时发生意外错误：{e}")
             branch_results.append({"label": label, "branch": branch, "status": "error", "body": None, "shas": []})
 
     # Surface (do not dedupe) commits shared across branches.
@@ -596,7 +605,7 @@ def main():
 
     # All branches empty (and none errored): nothing worth reporting — exit quietly.
     if not has_ok and not has_error:
-        print("\nNo important commits found on any tracked branch. Exiting.")
+        print("\n所有追踪分支均未发现重要提交。退出。")
         return
 
     # --- Generate Report Title ---
@@ -607,9 +616,9 @@ def main():
     try:
         report_date = datetime.now(ZoneInfo(report_tz)).strftime('%Y-%m-%d')
     except Exception as e:
-        print(f"Warning: invalid REPORT_TIMEZONE '{report_tz}' ({e}); falling back to UTC.")
+        print(f"警告：无效的 REPORT_TIMEZONE '{report_tz}'（{e}）；回退为 UTC。")
         report_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    report_title = f"Unreal Engine Daily Report - {report_date}"
+    report_title = f"Unreal Engine 每日报告 - {report_date}"
 
     # Track (target_name, success) so the workflow can fail if nothing posted.
     results = []
@@ -618,58 +627,58 @@ def main():
     # failure. Notify Slack/Discord (a Discussion needs a body) and fail the run.
     if not has_ok:
         failed = ", ".join(f"{r['label']} ({r['branch']})" for r in branch_results if r["status"] == "error")
-        print(f"\nFailed to generate a report for all branches with commits: {failed}")
-        error_message = f"Error: Failed to generate the Unreal Engine report for: {failed}."
+        print(f"\n以下分支的报告生成全部失败：{failed}")
+        error_message = f"错误：无法为以下分支生成 Unreal Engine 报告：{failed}。"
         if has_slack_target:
-            print("\n--- Handling Slack Notification for failure ---")
+            print("\n--- 处理失败时的 Slack 通知 ---")
             results.append(("Slack", send_slack_notification(slack_webhook_url, slack_channel, error_message, report_title)))
         if has_discord_target:
-            print("\n--- Handling Discord Notification for failure ---")
+            print("\n--- 处理失败时的 Discord 通知 ---")
             results.append(("Discord", send_discord_notification(discord_webhook_url, error_message, report_title)))
-        print("\n--- Delivery summary ---")
+        print("\n--- 投递摘要 ---")
         for name, ok in results:
-            print(f"  {'OK    ' if ok else 'FAILED'}: {name}")
-        print("FATAL: report generation failed for all branches; no report was delivered.")
+            print(f"  {'成功  ' if ok else '失败  '}：{name}")
+        print("致命错误：所有分支的报告生成均失败；未投递任何报告。")
         sys.exit(1)
 
     # --- Build and Send the Combined Report ---
-    print("\n--- 5. Generating and Sending Combined Report ---")
+    print("\n--- 5. 生成并发送合并报告 ---")
     report_body = _build_combined_report(branch_results, report_language)
 
     # --- 5a. Post to GitHub Discussion ---
     if has_discussion_target:
-        print("\n--- 5a. Posting to GitHub Discussion ---")
+        print("\n--- 5a. 发布到 GitHub Discussion ---")
         discussion_category = os.environ.get("DISCUSSION_CATEGORY", "Daily Reports")
-        print(f"Attempting to post to repository '{discussion_repo_name}' in category: '{discussion_category}'")
+        print(f"正在尝试发布到仓库 '{discussion_repo_name}'，分类：'{discussion_category}'")
         results.append(("GitHub Discussion", create_discussion(discussion_repo_name, report_title, report_body, discussion_repo_pat, category_name=discussion_category)))
     else:
-        print("\n--- 5a. GitHub Discussion target not configured. Skipping. ---")
+        print("\n--- 5a. 未配置 GitHub Discussion 目标，跳过。 ---")
 
     # --- 5b. Post to Slack ---
     if has_slack_target:
-        print("\n--- 5b. Posting to Slack ---")
+        print("\n--- 5b. 发送到 Slack ---")
         results.append(("Slack", send_slack_notification(slack_webhook_url, slack_channel, report_body, report_title)))
     else:
-        print("\n--- 5b. Slack target not configured. Skipping. ---")
+        print("\n--- 5b. 未配置 Slack 目标，跳过。 ---")
 
     # --- 5c. Post to Discord ---
     if has_discord_target:
-        print("\n--- 5c. Posting to Discord ---")
+        print("\n--- 5c. 发送到 Discord ---")
         results.append(("Discord", send_discord_notification(discord_webhook_url, report_body, report_title)))
     else:
-        print("\n--- 5c. Discord target not configured. Skipping. ---")
+        print("\n--- 5c. 未配置 Discord 目标，跳过。 ---")
 
     # --- Delivery summary ---
-    print("\n--- Delivery summary ---")
+    print("\n--- 投递摘要 ---")
     for name, ok in results:
-        print(f"  {'OK    ' if ok else 'FAILED'}: {name}")
+        print(f"  {'成功  ' if ok else '失败  '}：{name}")
     if results and not any(ok for _, ok in results):
-        print("FATAL: all configured notification targets failed.")
+        print("致命错误：所有配置的通知目标均投递失败。")
         sys.exit(1)
 
     # --- Finish ---
     print("\n=============================================")
-    print("Update Check Script Finished")
+    print("更新检查脚本执行完毕")
     print("=============================================")
 
 if __name__ == "__main__":

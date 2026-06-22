@@ -1,46 +1,44 @@
-name: Unreal Engine Update Tracker
+name: Unreal Engine 更新追踪
 
 on:
   workflow_dispatch:
     inputs:
       commit_scan_limit:
-        description: 'Number of recent commits to scan. If empty, the script defaults to the last 24 hours.'
+        description: '扫描的近期提交数量。留空则默认扫描最近24小时。'
         required: false
         default: ''
       ue_branches:
-        description: 'Comma-separated branches to track (e.g. ue5-main,ue6-main). Default: ue5-main,ue6-main'
+        description: '逗号分隔的追踪分支（如 ue5-main,ue6-main）。默认: ue5-main,ue6-main'
         required: false
         default: ''
       report_language:
-        description: 'Language for the report (e.g., Japanese, English). Default: Japanese'
+        description: '日报语言（如 Chinese, Japanese, English）。默认: Japanese'
         required: false
         default: ''
       discussion_category:
-        description: 'GitHub Discussion category to post to. Default: Daily Reports'
+        description: 'GitHub Discussion 投稿分类。默认: Daily Reports'
         required: false
         default: ''
       gemini_model:
-        description: 'The Gemini model to use for analysis. Default: gemini-3.5-flash'
+        description: '分析使用的 Gemini 模型。默认: gemini-3.5-flash'
         required: false
         default: ''
       slack_webhook_url:
-        description: 'Slack Webhook URL for notifications. Overrides secret.'
+        description: 'Slack 通知的 Webhook URL。会覆盖 Secret 中的值。'
         required: false
         default: ''
       slack_channel:
-        description: 'Slack channel to post to. Overrides secret.'
+        description: 'Slack 通知的目标频道。会覆盖 Secret 中的值。'
         required: false
         default: ''
       discord_webhook_url:
-        description: 'Discord Webhook URL for notifications. Overrides secret.'
+        description: 'Discord 通知的 Webhook URL。会覆盖 Secret 中的值。'
         required: false
         default: ''
   schedule:
-    # Runs every day at 23:00 UTC (which is 8:00 AM JST).
-    # NOTE: there is no persisted state — each run scans the last 24 hours
-    # (see fetch_new_commits in scripts/main.py). If GitHub delays or skips a
-    # scheduled run, commits in the gap can be missed; a re-run can duplicate a
-    # report. This is an intentional trade-off to keep the tool serverless.
+    # 每天 23:00 UTC（北京时间 7:00）自动执行。
+    # 注意：无持久化状态，每次仅扫描最近24小时的提交。若 GitHub 延迟或跳过某次定时执行，
+    # 间隔内的提交可能被遗漏；重新触发可能导致日报重复。这是保持工具 Serverless 的有意权衡。
     - cron: '0 23 * * *'
 
 jobs:
