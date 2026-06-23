@@ -1,12 +1,12 @@
 # AGENTS.md — UE-UpdateTracker
 
-通过 GitHub Actions 监控 Unreal Engine 私有仓库的更新，由 AI（智谱 GLM）进行摘要并发布到 Discussion/Slack/Discord 的工具。
+通过 GitHub Actions 监控 Unreal Engine 私有仓库的更新，由 AI（智谱 GLM / Google Gemini）进行摘要并发布到 Discussion/Slack/Discord 的工具。
 
 ## 项目结构
 
 ```
-scripts/main.py          # 全部逻辑（单文件、函数式、无类）
-prompts/report_prompt.md # 发给 GLM 的 Prompt 模板（填充 {report_language}, {aggregated_commits}）
+scripts/main.py          # 全部逻辑（单文件、含 MultiAIClient 类）
+prompts/report_prompt.md # 发给 AI 的 Prompt 模板（填充 {report_language}, {aggregated_commits}）
 requirements.txt         # PyGithub, openai, python-dotenv, tzdata, requests
 ```
 
@@ -14,12 +14,13 @@ requirements.txt         # PyGithub, openai, python-dotenv, tzdata, requests
 
 ```bash
 pip install -r requirements.txt
-python scripts/main.py   # 需要: UE_REPO_PAT, ZHIPU_API_KEY + 通知目标环境变量
+python scripts/main.py   # 需要: UE_REPO_PAT, ZHIPU_API_KEY 和/或 GEMINI_API_KEY + 通知目标环境变量
 ```
 
 ## 架构要点
 
-- 所有分支的提交在过滤后 **一次性批量发送给 GLM**（不是逐条调用 API）
+- 所有分支的提交在过滤后 **一次性批量发送给 AI**（不是逐条调用 API）
+- `MultiAIClient` 管理多个 AI 提供商（智谱 GLM / Gemini），遇到速率限制自动切换到备选提供商
 - `filter_commit()` 过滤 Merge 空提交 / 纯文档 / 纯本地化 / 单文件 typo 修复
 - `process_branch()` 编排分支级别的 fetch → filter → analyze，失败隔离（一个分支的错误不影响其他分支）
 - `_build_combined_report()` 将各分支报告以 H2 标题 + `---` 分隔符合并

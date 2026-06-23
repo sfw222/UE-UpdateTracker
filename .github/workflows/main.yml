@@ -1,5 +1,9 @@
 name: Unreal Engine 更新追踪
 
+concurrency:
+  group: update-tracker
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
@@ -19,8 +23,8 @@ on:
         description: 'GitHub Discussion 投稿分类。默认: 日报'
         required: false
         default: ''
-      gemini_model:
-        description: '分析使用的模型。默认: glm-4.7-flash（智谱 GLM）'
+      ai_model:
+        description: '分析使用的 GLM 模型。默认: glm-4.7-flash。Gemini 模型请通过 GEMINI_MODEL Variable 设置。'
         required: false
         default: ''
       slack_webhook_url:
@@ -52,7 +56,8 @@ jobs:
     env:
       # --- Secrets (Must be configured in repository settings) ---
       UE_REPO_PAT: ${{ secrets.UE_REPO_PAT }}
-      ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY || secrets.GEMINI_API_KEY }}
+      ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # GitHub Discussion posting is opt-in: set BOTH DISCUSSION_REPO (target repo,
       # e.g. owner/name) and DISCUSSION_REPO_PAT (a PAT with 'discussions: write').
       # The repo is intentionally NOT defaulted to github.repository and GITHUB_TOKEN
@@ -68,8 +73,9 @@ jobs:
       # single-branch setups (which configured UE_BRANCH) keep working.
       UE_BRANCHES: ${{ github.event.inputs.ue_branches || vars.UE_BRANCHES || vars.UE_BRANCH || 'ue5-main,ue6-main' }}
       REPORT_LANGUAGE: ${{ github.event.inputs.report_language || vars.REPORT_LANGUAGE || 'Chinese' }}
-      REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE || 'Asia/Tokyo' }}
-      ZHIPU_MODEL: ${{ github.event.inputs.gemini_model || vars.ZHIPU_MODEL || vars.GEMINI_MODEL || 'glm-4.7-flash' }}
+      REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE || 'Asia/Shanghai' }}
+      ZHIPU_MODEL: ${{ github.event.inputs.ai_model || vars.ZHIPU_MODEL || 'glm-4.7-flash' }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
       DISCUSSION_CATEGORY: ${{ github.event.inputs.discussion_category || vars.DISCUSSION_CATEGORY || '日报' }}
       COMMIT_SCAN_LIMIT: ${{ github.event.inputs.commit_scan_limit }}
       SLACK_WEBHOOK_URL: ${{ github.event.inputs.slack_webhook_url || secrets.SLACK_WEBHOOK_URL }}
@@ -91,4 +97,5 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run update check script
+        timeout-minutes: 15
         run: python scripts/main.py

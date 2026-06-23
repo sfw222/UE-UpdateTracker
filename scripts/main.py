@@ -18,6 +18,76 @@ COMMIT_SCAN_LIMIT = int(raw_limit) if raw_limit and raw_limit.isdigit() else Non
 # Timeout (seconds) for outbound HTTP calls (GitHub GraphQL, Slack, Discord).
 REQUEST_TIMEOUT = 30
 
+# 速率限制相关关键词（用于识别各 AI 提供商的配额错误）
+_RATE_LIMIT_MARKERS = ("429", "rate_limit", "RESOURCE_EXHAUSTED", "UNAVAILABLE",
+                       "配额", "速率限制", "quota", "rate limit")
+
+
+class MultiAIClient:
+    """封装多个 AI 提供商，支持自动故障转移。
+
+    提供商列表按优先级排列（第一个为首选）。当调用 call() 时，如果当前
+    提供商遇到速率限制错误，自动切换到下一个可用提供商并重试。
+    """
+
+    def __init__(self, providers):
+        """
+        Args:
+            providers: list of dict，每个 dict 包含：
+                - name:  显示名称（如 "智谱 GLM", "Gemini"）
+                - client: openai.OpenAI 实例
+                - model:  模型名称
+        """
+        if not providers:
+            raise ValueError("至少需要配置一个 AI 提供商")
+        self.providers = providers
+        self.active = 0  # 当前活跃提供商索引
+
+    @property
+    def active_name(self):
+        return self.providers[self.active]["name"]
+
+    @property
+    def active_model(self):
+        return self.providers[self.active]["model"]
+
+    def call(self, messages, temperature=0.3, timeout=120):
+        """调用当前活跃提供商；速率限制时自动切换到下一个。
+
+        Returns:
+            响应对象（与 OpenAI chat.completions.create 返回类型相同）
+
+        Raises:
+            Exception: 所有提供商均不可用时抛出最后一个异常
+        """
+        last_error = None
+        for i in range(len(self.providers)):
+            idx = (self.active + i) % len(self.providers)
+            provider = self.providers[idx]
+            try:
+                response = provider["client"].chat.completions.create(
+                    model=provider["model"],
+                    messages=messages,
+                    temperature=temperature,
+                    timeout=timeout,
+                )
+                if idx != self.active:
+                    print(f"  ✓ 已切换到 {provider['name']}（{provider['model']}）")
+                    self.active = idx
+                return response
+            except Exception as e:
+                err_str = str(e).lower()
+                if any(marker.lower() in err_str for marker in _RATE_LIMIT_MARKERS):
+                    last_error = e
+                    print(f"  ⚠ {provider['name']} 达到速率限制：{e}")
+                    if i < len(self.providers) - 1:
+                        next_p = self.providers[(idx + 1) % len(self.providers)]
+                        print(f"  → 自动切换到 {next_p['name']}（{next_p['model']}）...")
+                        continue
+                else:
+                    raise
+        raise last_error
+
 
 def get_target_branches():
     """Returns the list of (label, branch) pairs to track.
@@ -88,12 +158,21 @@ def filter_commit(commit):
     # Ignore simple typo fixes
     if "typo" in commit_message and len(files) == 1:
         return False
+    # Ignore commits where every changed file is a code-generated artifact or build byproduct
+    if all(
+        f.filename.endswith(".generated.h") or f.filename.endswith(".generated.cpp")
+        or f.filename.startswith("Config/") or f.filename.startswith("Intermediate/")
+        or f.filename.startswith("DerivedDataCache/")
+        for f in files
+    ):
+        return False
     return True
 
 
-def analyze_commits_in_bulk(client, model_name, commits, report_language="Chinese"):
+def analyze_commits_in_bulk(ai_client, commits, report_language="Chinese"):
     """
-    使用智谱 GLM API 批量分析提交列表，返回格式化的 Markdown 报告。
+    使用 MultiAIClient 批量分析提交列表，返回格式化的 Markdown 报告。
+    遇到速率限制时自动切换到备选 AI 提供商。
     """
     print(f"正在聚合 {len(commits)} 条提交以进行批量分析...")
     
@@ -125,39 +204,30 @@ URL: {commit.html_url}
             aggregated_commits=aggregated_commits
         )
 
-        print(f"  > 正在向 GLM 发送 {len(commits)} 条提交的聚合提示词（语言：{report_language}）...")
+        print(f"  > 正在向 {ai_client.active_name} 发送 {len(commits)} 条提交的聚合提示词（语言：{report_language}）...")
 
         # 遇到临时错误（503、429 等）最多重试 3 次，指数退避
         max_retries = 3
-        last_error = None
         for attempt in range(max_retries):
             try:
-                response = client.chat.completions.create(
-                    model=model_name,
+                response = ai_client.call(
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3
+                    temperature=0.3,
+                    timeout=120,
                 )
                 break  # 成功 — 退出重试循环
             except Exception as e:
-                last_error = e
                 err_str = str(e)
-                if attempt < max_retries - 1 and ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str or "RESOURCE_EXHAUSTED" in err_str or "rate_limit" in err_str.lower()):
+                if attempt < max_retries - 1 and ("503" in err_str or "UNAVAILABLE" in err_str):
                     wait = 5 * (2 ** attempt)  # 5, 10, 20 秒
-                    print(f"  ⚠ GLM 暂时不可用（{e}），{wait}s 后重试（{attempt + 2}/{max_retries}）...")
+                    print(f"  ⚠ 暂时不可用（{e}），{wait}s 后重试（{attempt + 2}/{max_retries}）...")
                     time.sleep(wait)
                     continue
                 raise
 
-        if last_error is not None:
-            raise last_error
-
         result_text = response.choices[0].message.content
 
-        # --- 详细日志（调试时取消注释） ---
-        print(f"--- 批量响应 ---\n{result_text}\n--------------------\n")
-        # --- 详细日志结束 ---
-
-        print(f"  < 已收到 GLM 的批量响应。")
+        print(f"  < 已收到 {ai_client.active_name} 的批量响应。")
         
         return result_text
 
@@ -444,7 +514,7 @@ def send_discord_notification(webhook_url, message_text, title):
         print("Discord 通知未完成：一条或多条消息发送失败。")
     return all_ok
 
-def process_branch(github_client, ai_client, branch, label, model_name, report_language):
+def process_branch(github_client, ai_client, branch, label, report_language, seen_shas=None):
     """Fetch, filter, and analyze commits for a single branch.
 
     Returns a dict {label, branch, status, body, shas} where status is one of:
@@ -453,6 +523,9 @@ def process_branch(github_client, ai_client, branch, label, model_name, report_l
       - "error": fetch failed or the AI returned no content
     Failures are returned (not raised) so the caller can isolate one branch's
     problem and still report the others.
+
+    seen_shas: optional set of commit SHAs already analyzed in a prior branch.
+    Matching commits are skipped to avoid duplicate report entries.
     """
     new_commits = fetch_new_commits(github_client, branch)
     if new_commits is None:
@@ -463,37 +536,24 @@ def process_branch(github_client, ai_client, branch, label, model_name, report_l
         return {"label": label, "branch": branch, "status": "empty", "body": None, "shas": []}
 
     important_commits = [commit for commit in new_commits if filter_commit(commit)]
+    if seen_shas:
+        before = len(important_commits)
+        important_commits = [c for c in important_commits if c.sha not in seen_shas]
+        skipped = before - len(important_commits)
+        if skipped:
+            print(f"跨分支去重：跳过 {skipped} 条已在其他分支分析过的提交。")
     if not important_commits:
         print(f"过滤后分支 '{branch}' 没有发现重要提交。")
         return {"label": label, "branch": branch, "status": "empty", "body": None, "shas": []}
 
     print(f"发现 {len(important_commits)} 条可能需要分析的重要提交（分支：'{branch}'）。")
     shas = [commit.sha for commit in important_commits]
-    report_body = analyze_commits_in_bulk(ai_client, model_name, important_commits, report_language)
+    report_body = analyze_commits_in_bulk(ai_client, important_commits, report_language)
     if not report_body:
         print(f"AI 为分支 '{branch}' 生成报告失败。")
         return {"label": label, "branch": branch, "status": "error", "body": None, "shas": shas}
 
     return {"label": label, "branch": branch, "status": "ok", "body": report_body, "shas": shas}
-
-
-def _warn_duplicate_shas(branch_results):
-    """Log a warning when the same commit appears on more than one branch.
-
-    UE branches share history, so a cherry-picked/merged commit can land in two
-    branches' windows and be summarized twice. We only surface this (no dedupe),
-    since deciding which branch 'owns' a shared commit is out of scope.
-    """
-    seen = {}
-    for result in branch_results:
-        for sha in result.get("shas", []):
-            seen.setdefault(sha, []).append(result["label"])
-    dups = {sha: labels for sha, labels in seen.items() if len(labels) > 1}
-    if dups:
-        print(f"警告：{len(dups)} 条提交出现在多个追踪分支中"
-              f"（按分支分别报告，未去重）：")
-        for sha, labels in list(dups.items())[:20]:
-            print(f"  {sha[:7]}: {', '.join(labels)}")
 
 
 def _build_combined_report(branch_results, report_language):
@@ -539,32 +599,50 @@ def main():
     # --- API Setup ---
     print("\n--- 1. 初始化 API ---")
     pat = os.environ.get("UE_REPO_PAT")
-    # 支持新旧环境变量名：ZHIPU_API_KEY 优先，GEMINI_API_KEY 作为回退
-    zhipu_api_key = os.environ.get("ZHIPU_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    
+    zhipu_api_key = os.environ.get("ZHIPU_API_KEY")
+    gemini_api_key = os.environ.get("GEMINI_API_KEY")
+
     if not pat:
         print("致命错误：未设置 UE_REPO_PAT 环境变量。")
         sys.exit(1)
     print("UE_REPO_PAT 已就绪。")
 
-    if not zhipu_api_key:
-        print("致命错误：未设置 ZHIPU_API_KEY 环境变量。")
+    if not zhipu_api_key and not gemini_api_key:
+        print("致命错误：未设置任何 AI API 密钥。请设置 ZHIPU_API_KEY 和/或 GEMINI_API_KEY。")
         sys.exit(1)
-    print("ZHIPU_API_KEY 已就绪。")
-    
+
     try:
         print("正在初始化 GitHub 客户端...")
         github_client = Github(auth=Auth.Token(pat))
         print("GitHub 客户端初始化完成。")
-        
-        # 支持新旧环境变量名：ZHIPU_MODEL 优先，GEMINI_MODEL 作为回退
-        ai_model_name = os.environ.get("ZHIPU_MODEL") or os.environ.get("GEMINI_MODEL") or "glm-4.7-flash"
-        print(f"正在配置智谱 GLM API，模型：{ai_model_name}...")
-        ai_client = OpenAI(api_key=zhipu_api_key, base_url="https://open.bigmodel.cn/api/paas/v4/")
-        print("智谱 GLM API 配置完成。")
     except Exception as e:
-        print(f"致命错误：初始化 API 失败：{e}")
+        print(f"致命错误：初始化 GitHub 客户端失败：{e}")
         sys.exit(1)
+
+    # 初始化 AI 提供商列表（按优先级排列：GLM > Gemini）
+    providers = []
+    if zhipu_api_key:
+        zhipu_model = os.environ.get("ZHIPU_MODEL", "glm-4.7-flash")
+        print(f"正在配置智谱 GLM API，模型：{zhipu_model}...")
+        providers.append({
+            "name": "智谱 GLM",
+            "client": OpenAI(api_key=zhipu_api_key, base_url="https://open.bigmodel.cn/api/paas/v4/"),
+            "model": zhipu_model,
+        })
+        print("智谱 GLM API 配置完成。")
+    if gemini_api_key:
+        gemini_model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        print(f"正在配置 Google Gemini API，模型：{gemini_model}...")
+        providers.append({
+            "name": "Gemini",
+            "client": OpenAI(api_key=gemini_api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/"),
+            "model": gemini_model,
+        })
+        print("Google Gemini API 配置完成。")
+
+    ai_client = MultiAIClient(providers)
+    provider_names = " → ".join(p["name"] for p in providers)
+    print(f"AI 提供商链路：{provider_names}")
 
     # --- Notification Target Check ---
     print("\n--- 2. 检查通知目标 ---")
@@ -608,19 +686,20 @@ def main():
     print(f"报告语言设置为：{report_language}")
 
     branch_results = []
+    seen_shas = set()
     for label, branch in targets:
+        if branch_results:
+            # 分支间短暂等待，避免连续 API 调用触发速率限制
+            time.sleep(2)
         print(f"\n--- 分支：{label} ({branch}) ---")
         try:
-            branch_results.append(
-                process_branch(github_client, ai_client, branch, label, ai_model_name, report_language)
-            )
+            result = process_branch(github_client, ai_client, branch, label, report_language, seen_shas)
+            seen_shas.update(result.get("shas", []))
+            branch_results.append(result)
         except Exception as e:
             # Isolate per-branch failures so one bad branch doesn't abort the rest.
             print(f"处理分支 '{branch}' 时发生意外错误：{e}")
             branch_results.append({"label": label, "branch": branch, "status": "error", "body": None, "shas": []})
-
-    # Surface (do not dedupe) commits shared across branches.
-    _warn_duplicate_shas(branch_results)
 
     has_ok = any(r["status"] == "ok" for r in branch_results)
     has_error = any(r["status"] == "error" for r in branch_results)
@@ -696,6 +775,10 @@ def main():
         print(f"  {'成功  ' if ok else '失败  '}：{name}")
     if results and not any(ok for _, ok in results):
         print("致命错误：所有配置的通知目标均投递失败。")
+        sys.exit(1)
+    if has_error:
+        failed = ", ".join(f"{r['label']} ({r['branch']})" for r in branch_results if r["status"] == "error")
+        print(f"警告：以下分支报告生成失败（已以占位符输出）：{failed}")
         sys.exit(1)
 
     # --- Finish ---
