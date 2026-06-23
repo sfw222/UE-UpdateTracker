@@ -1,14 +1,6 @@
 # Unreal Engine 更新追踪
 
-[日本語版はこちら](https://github.com/pafuhana1213/UnrealEngine-UpdateTracker)
-
 本项目是一个自动化工具，定期监控 Unreal Engine 私有 GitHub 仓库的更新，使用 AI（智谱 GLM）对重要变更（如新功能和规格变更）进行摘要，并以报告形式发布到 GitHub Discussions。
-
-<table><tr><td>
-<img width="644" alt="image" src="https://github.com/pafuhana1213/Screenshot/blob/master/Report_sample_jp.png" />
-</td></tr></table>
-
-注意：此图片为报告示例，其内容均为虚构数据，不代表 Unreal Engine 的实际更新。
 
 ## 🚀 快速开始
 
